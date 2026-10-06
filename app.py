@@ -18,7 +18,7 @@ from profiler import profile_all
 
 st.set_page_config(page_title="Kanakku - The PA", layout="wide")
 st.title("Kanakku - The PA")
-st.caption("Answers you can verify.")
+st.caption("Numbers you can check, not just trust.")
 
 # ---- A3: dataset picker -------------------------------------------------
 datasets = sorted(p.name for p in Path("data").iterdir() if p.is_dir() and any(p.glob("*.csv")))

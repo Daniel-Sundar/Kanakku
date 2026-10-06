@@ -1,7 +1,15 @@
-# Kanakku - The PA: answers you can verify
+# Kanakku - The PA: numbers you can check, not just trust
 > HackNex 2026 · HNX26PSI08 Proof-Carrying Data Analyst · Team: TODO (names)
 
 <!-- Owner: B (ticket B5). Fill every TODO. Keep each section short. -->
+
+Kanakku - The PA is the friend every team needs: the one who actually checks the bill before splitting it.
+
+Ask it anything about your messy spreadsheets: "How much did we sell in March?" or "Which region earned the most?" Kanakku gives you the answer and the working, like the topper in class who writes every step on the board. Every number comes with a tiny Python script you can re-run yourself. Same data, same number, every time.
+
+And when the data is fishy (the same order written twice, dollars mixed with euros, a date that could be 3 February or 2 March), Kanakku doesn't bluff. It points at the exact rows and says, "Boss, idhu kanakku-la varala." (Boss, this doesn't add up.) Then it tells you what it needs to get it right.
+
+No guesswork. No fake confidence. Just clean kanakku.
 
 ## What it is
 TODO: 3 sentences. An AI data analyst for messy multi-table data. Every number comes with a Python proof script anyone can re-run. When the data can't support an answer, it refuses and says exactly why.
