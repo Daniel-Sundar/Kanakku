@@ -23,7 +23,7 @@ TODO: Python 3.11, pandas, Streamlit, LLM (which cloud model / Ollama qwen2.5-co
 ## Install
 ```bash
 git clone TODO
-cd kanakku
+cd Kanakku
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```

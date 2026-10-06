@@ -1,12 +1,12 @@
 # Team setup: GitHub + rules (read once)
 
 ## Daniel: put the repo on GitHub (one time, about 15 minutes)
-1. On github.com click **New repository**, name it `kanakku`, choose **Public** (the booklet requires it), and don't add a README.
+1. On github.com click **New repository**, name it `Kanakku`, choose **Public** (the booklet requires it), and don't add a README.
 2. On your laptop, inside this folder:
    ```bash
    git init -b main
    git add . && git commit -m "[D3] starter pack"
-   git remote add origin https://github.com/<you>/kanakku.git
+   git remote add origin https://github.com/<you>/Kanakku.git
    git push -u origin main
    bash tools/install_hook.sh daniel
    ```
@@ -19,8 +19,8 @@
 
 ## A and B: first time
 ```bash
-git clone https://github.com/<daniel>/kanakku.git
-cd kanakku
+git clone https://github.com/<daniel>/Kanakku.git
+cd Kanakku
 python3 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 bash tools/install_hook.sh a        # B types: b
