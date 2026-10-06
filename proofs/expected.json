@@ -1,0 +1,4 @@
+{
+  "proofs/example/q1_jan_usd_revenue.py": 2000.0,
+  "proofs/example/q2_march_revenue_usd_both_readings.py": {"if_DD/MM": 1788.0, "if_MM/DD": 2814.0}
+}

@@ -1,0 +1,22 @@
+name: checks
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  ownership:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: python3 tools/check_owner.py --branch "${{ github.head_ref }}" --base "origin/${{ github.base_ref }}"
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+      - run: python verify_all.py

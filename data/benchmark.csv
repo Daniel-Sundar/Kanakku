@@ -1,0 +1,8 @@
+id,dataset,question,expected_behaviour,gold_value,notes
+EX1,example,What was revenue from USD orders in January 2024?,answer,2000.00,duplicate 1002 counted once
+EX2,example,Total revenue in March 2024 in USD?,conditional,1788.00|2814.00,DD/MM vs MM/DD for order 1003
+EX3,example,What was total Q1 2024 revenue in USD?,refuse,,order 1004 amount missing; no Feb FX rate
+EX4,example,Revenue from North-region customers in January 2024 (USD)?,answer,1200.00,C3 contradiction not in scope
+EX5,example,Revenue from North-region customers in March 2024 (USD)?,refuse,,C3 region contradicts between tables
+EX6,example,Which month had the highest profit?,refuse,,no cost column
+EX7,example,Why did revenue drop in February?,refuse,,causal question + missing data
