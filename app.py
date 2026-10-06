@@ -16,8 +16,8 @@ from engine import rerun_proof, run_question
 from loader import load_folder
 from profiler import profile_all
 
-st.set_page_config(page_title="ProofPilot", layout="wide")
-st.title("ProofPilot")
+st.set_page_config(page_title="Kanakku - The PA", layout="wide")
+st.title("Kanakku - The PA")
 st.caption("Answers you can verify.")
 
 # ---- A3: dataset picker -------------------------------------------------

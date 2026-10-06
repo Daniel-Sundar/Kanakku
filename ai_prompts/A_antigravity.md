@@ -2,7 +2,7 @@
 
 ## 1. Paste this ONCE at the start of every new AntiGravity chat
 ```
-You are helping me (teammate A) on ProofPilot, a Streamlit app for a hackathon.
+You are helping me (teammate A) on Kanakku - The PA, a Streamlit app for a hackathon.
 STRICT RULES:
 - You may edit ONLY the file app.py. Do not create, edit, rename or delete any other file.
 - Do not touch tests/, engine.py, engine_mock.py, loader.py, profiler.py, profiler_checks.py, tools/ or .github/.

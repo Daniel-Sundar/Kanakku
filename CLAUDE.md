@@ -1,4 +1,4 @@
-# ProofPilot (HackNex 2026, HNX26PSI08 Proof-Carrying Data Analyst)
+# Kanakku - The PA (HackNex 2026, HNX26PSI08 Proof-Carrying Data Analyst)
 
 An AI data analyst for messy multi-table data. Every number it returns comes with a standalone Python proof script that re-computes it. When the data can't support an answer, it refuses and gives a specific reason.
 
@@ -52,5 +52,6 @@ Result = {"status": "answered|abstained|error", "answer", "value", "unit", "assu
 
 ## Working style
 - Small steps. After every change, run `pytest -q`. Don't commit red tests.
+- tests/test_profiler_checks.py is expected to fail until B finishes ticket B3; all other tests must stay green.
 - Commit messages start with the ticket ID, e.g. `[D6] planner + executor`.
 - Never invent gold answers. They come from C's BENCHMARK sheet (`data/benchmark.csv`).

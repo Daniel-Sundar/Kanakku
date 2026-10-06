@@ -1,4 +1,4 @@
-# ProofPilot: answers you can verify
+# Kanakku - The PA: answers you can verify
 > HackNex 2026 · HNX26PSI08 Proof-Carrying Data Analyst · Team: TODO (names)
 
 <!-- Owner: B (ticket B5). Fill every TODO. Keep each section short. -->
