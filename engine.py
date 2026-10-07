@@ -67,6 +67,10 @@ else:
                         reason=f"There is no column for {miss[0]} in any table "
                                f"(looked for: {', '.join(miss[1])}).",
                         needed=f"A column with {' or '.join(dict.fromkeys(miss[1]))} for each row.")
+        # Gate 2b: question shapes a single proven number can't answer (rankings, comparisons).
+        unsup = planner.unsupported(question)
+        if unsup:
+            return done(status="abstained", answer="I can't determine this reliably.", reason=unsup[0], needed=unsup[1])
         # Gate 3: a name the question depends on that is nowhere in the data (a trick or a typo).
         unknown = planner.unknown_names(question, tables, s)
         if unknown:

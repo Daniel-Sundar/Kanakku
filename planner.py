@@ -45,8 +45,9 @@ def schema(tables: dict) -> dict:
                 if c != key_col and not pd.api.types.is_numeric_dtype(t[c]) and t[c].nunique() <= 50:
                     dims.setdefault(c, set()).update(str(v) for v in t[c].dropna())
     all_cols = {c.lower() for t in tables.values() for c in t.columns}
+    keys = sorted(df[key_col].dropna().astype(str).unique()) if key_col else []
     return {"fact": best, "date_col": date_col, "value_col": value_col, "currency_col": currency_col,
-            "key_col": key_col, "currencies": currencies, "dims": dims, "all_cols": all_cols}
+            "key_col": key_col, "keys": keys, "currencies": currencies, "dims": dims, "all_cols": all_cols}
 
 
 # ---------- plan from rules -------------------------------------------------
@@ -95,7 +96,30 @@ def rule_plan(question: str, s: dict) -> dict:
         for v in values:
             if mentions(q, v):
                 plan["filters"][col] = v
+    for v in s.get("keys", []):
+        if re.search(rf"\b{re.escape(v.lower())}\b", q):
+            plan["filters"][s["key_col"]] = v
     return plan
+
+
+UNSUPPORTED = [
+    (re.compile(r"\b(top|highest|lowest|most|least|best|worst|biggest|smallest|rank|ranking|largest)\b", re.I),
+     "This asks for a ranking. ProofPilot proves one total, count, average or list at a time.",
+     "Ask for one total per item instead, e.g. 'Total USD revenue for customer C5 in January 2024'."),
+    (re.compile(r"\b(compare|versus|vs\.?|difference between|growth|trend)\b", re.I),
+     "This asks for a comparison. ProofPilot proves one number at a time.",
+     "Ask for each period separately, then compare the two proven numbers."),
+    (re.compile(r"\b(blank|missing|empty|null|duplicates?|duplicated)\b", re.I),
+     "This asks about data problems, which the Trap Radar on the Datasets page already lists with row numbers.",
+     "Open Datasets and read the Trap Radar cards."),
+]
+
+
+def unsupported(question: str):
+    for rx, reason, needed in UNSUPPORTED:
+        if rx.search(question):
+            return reason, needed
+    return None
 
 
 def _squash(x: str) -> str:

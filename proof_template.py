@@ -117,6 +117,9 @@ def compute(reading):
             d = d[(day >= DAYS[0]) & (day <= DAYS[1])]
     # Trap 3: the same customer described differently in two tables.
     for col, want in FILTERS.items():
+        if col == KEY_COL:              # one customer / buyer by id
+            d = d[d[KEY_COL].str.upper() == str(want).upper()]
+            continue
         sources = [(n, t) for n, t in tables.items() if n != FACT and col in t.columns and KEY_COL in t.columns]
         maps = [(n, dict(zip(t[KEY_COL], t[col]))) for n, t in sources]
         for k in d[KEY_COL].dropna().unique():
