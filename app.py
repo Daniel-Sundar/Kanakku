@@ -1,11 +1,16 @@
 """ProofPilot screen.   Run:  streamlit run app.py
 
+Pages: Home · Datasets · Ask · History · Settings · Help
 Calls only the frozen contract:
   load_folder(path) -> tables        profile_all(tables) -> flags
   run_question(question, tables, flags) -> result        rerun_proof(proof_path) -> {"value", "match"}
 """
 import datetime as dt
 import html
+import json
+import os
+import shutil
+import socket
 import uuid
 from pathlib import Path
 
@@ -17,13 +22,22 @@ from loader import load_folder
 from profiler import profile_all
 
 ROOT = Path(__file__).resolve().parent
+VERSION = "1.0.0"
 REPO_URL = "https://github.com/Daniel-Sundar/Kanakku"
-DEMO_LABELS = {"nimbus_retail": "Nimbus Retail (300 orders, 4 tables)",
-               "example": "Tiny example (7 orders)", "canteen": "Campus canteen (50 sales)"}
+SUPPORT_URL = REPO_URL + "/issues"
+DEMOS = {
+    "nimbus_retail": ("Nimbus Retail", "300 orders across 4 tables: orders, two customer lists, exchange rates. "
+                                       "Has every trap: duplicates, € and $, ambiguous dates, blanks, tables that disagree."),
+    "canteen": ("Campus canteen", "50 sales from 4 food stalls. A different layout, to show nothing is hard-coded."),
+    "example": ("Tiny example", "7 orders. Small enough to check every answer by hand."),
+}
 EXAMPLES = {
     "nimbus_retail": ["What was revenue from USD orders in January 2024?",
                       "Total revenue in April 2024 in USD?",
                       "Total revenue in June 2024 in USD?",
+                      "Total USD revenue for North customers in March 2024",
+                      "Total revenue in 2019 in USD",
+                      "Which month had the highest profit?",
                       "Why did revenue drop in February?"],
     "example": ["What was revenue from USD orders in January 2024?",
                 "Total revenue in March 2024 in USD?",
@@ -34,237 +48,514 @@ EXAMPLES = {
                 "Total sales in September 2024"],
 }
 GENERIC = ["What was the total amount in 2024?", "How many rows are there in 2024?"]
-TRAP_ICON = {"duplicate_rows": "🔁", "missing_values": "🕳️", "mixed_currency": "💱",
-             "ambiguous_date": "📅", "missing_period": "📆", "contradiction": "⚔️"}
 TRAP_NAME = {"duplicate_rows": "Duplicate rows", "missing_values": "Blank values",
              "mixed_currency": "Mixed currencies", "ambiguous_date": "Ambiguous dates",
              "missing_period": "Missing month", "contradiction": "Tables disagree"}
+PLANNERS = {"cloud": "Cloud AI first (Gemini), then local, then cache",
+            "local": "Local AI first (Ollama on this laptop), then cloud, then cache",
+            "replay": "Cached AI replies only (no internet needed)",
+            "rules": "No AI: built-in rule planner (fully offline)"}
 
 st.set_page_config(page_title="ProofPilot · Numbers you can check", page_icon=str(ROOT / "assets" / "favicon.png"),
                    layout="wide", initial_sidebar_state="auto",
-                   menu_items={"About": "ProofPilot: every number comes with a Python proof you can re-run. "
-                                        "HackNex 2026 · HNX26PSI08."})
+                   menu_items={"About": f"ProofPilot {VERSION}: every number comes with a Python proof you can "
+                                        "re-run. HackNex 2026 · HNX26PSI08.",
+                               "Report a bug": SUPPORT_URL, "Get help": REPO_URL + "#readme"})
 
+# ---- Design system: 1 font, 1 primary, 1 accent, 2 backgrounds, radius 8, spacing 4/8/12/16/24/32 ----
 st.markdown("""
 <style>
+:root { --primary: #0f5c4a; --accent: #b7791f; --bg: #ffffff; --bg2: #f6f8f7; --ink: #1c2421;
+  --muted: #5f6b66; --line: #dfe5e2; --ok: #157347; --bad: #b42318; --r: 8px; }
 html, body, [data-testid="stAppViewContainer"], .main { overflow-x: hidden !important; max-width: 100vw; }
-.block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1150px; }
-:root { --brand: #0f5c4a; --gold: #f2b705; --ink: #1f2330; --muted: #64748b; --line: #e2e8f0; }
-.pp-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-  border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 16px; }
-.pp-logo { display: flex; align-items: center; gap: 12px; text-decoration: none !important; }
-.pp-mark { width: 44px; height: 44px; border-radius: 12px; background: var(--brand); color: var(--gold);
-  display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 900; flex: none; }
-.pp-name { color: var(--brand); font-size: 1.7rem; font-weight: 800; line-height: 1.1; }
-.pp-tag { color: var(--muted); font-size: .95rem; }
-.pp-pill { background: #ecfdf5; color: var(--brand); border: 1px solid #a7f3d0; border-radius: 999px;
-  padding: 4px 12px; font-size: .8rem; font-weight: 700; white-space: nowrap; }
-.pp-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
-  margin-bottom: 10px; box-shadow: 0 1px 3px rgba(15,23,42,.06); overflow-wrap: anywhere; color: var(--ink); }
-.pp-trap { border-left: 5px solid #94a3b8; }
-.pp-trap.high { border-left-color: #dc2626; } .pp-trap.medium { border-left-color: #f59e0b; }
-.pp-trap b { display: block; margin-bottom: 2px; }
-.pp-small { color: var(--muted); font-size: .82rem; }
-.pp-answer { border-top: 5px solid #16a34a; } .pp-refuse { border-top: 5px solid #dc2626; }
-.pp-error { border-top: 5px solid #94a3b8; }
-.pp-big { font-size: clamp(1.4rem, 5vw, 2.3rem); font-weight: 800; color: var(--ink); line-height: 1.2; }
-.pp-step { display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: var(--brand);
-  color: #fff; text-align: center; font-size: .75rem; line-height: 22px; margin-right: 6px; }
-.pp-footer { border-top: 1px solid var(--line); margin-top: 28px; padding-top: 12px; color: var(--muted);
-  font-size: .85rem; display: flex; gap: 14px; flex-wrap: wrap; justify-content: space-between; }
-.pp-footer a { color: var(--brand); }
+html, body, [class*="css"], .stMarkdown, button, input { font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
+.block-container { padding-top: 24px; padding-bottom: 32px; max-width: 1080px; }
+h1, h2, h3 { font-weight: 700 !important; letter-spacing: -0.01em; }
+h1 { font-size: 1.75rem !important; } h2 { font-size: 1.35rem !important; } h3 { font-size: 1.1rem !important; }
+.pp-card { background: var(--bg); border: 1px solid var(--line); border-radius: var(--r); padding: 16px;
+  margin-bottom: 12px; color: var(--ink); overflow-wrap: anywhere; box-sizing: border-box; max-width: 100%; }
+.pp-muted { color: var(--muted); font-size: .9rem; }
+.pp-label { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.pp-trap { border-left: 4px solid var(--line); }
+.pp-trap.high { border-left-color: var(--bad); } .pp-trap.medium { border-left-color: var(--accent); }
+.pp-answer { border-left: 4px solid var(--ok); } .pp-refuse { border-left: 4px solid var(--bad); }
+.pp-error { border-left: 4px solid var(--muted); }
+.pp-big { font-size: clamp(1.4rem, 5vw, 2rem); font-weight: 700; line-height: 1.25; margin: 4px 0 8px; }
+.pp-hero { text-align: center; padding: 48px 16px 32px; }
+.pp-hero .name { font-size: clamp(2.2rem, 8vw, 3.2rem); font-weight: 700; color: var(--primary); line-height: 1.1; }
+.pp-hero .tag { font-size: 1.1rem; color: var(--muted); margin-top: 12px; }
+.pp-badge { display: inline-block; border: 1px solid var(--line); border-radius: var(--r); padding: 4px 8px;
+  font-size: .8rem; color: var(--muted); background: var(--bg2); }
+.pp-steps { counter-reset: s; list-style: none; padding: 0; margin: 0; }
+.pp-steps li { counter-increment: s; padding: 8px 0 8px 32px; position: relative; border-bottom: 1px solid var(--line); }
+.pp-steps li:before { content: counter(s); position: absolute; left: 0; top: 8px; width: 20px; height: 20px;
+  border-radius: 50%; background: var(--primary); color: #fff; font-size: .75rem; text-align: center; line-height: 20px; }
+.pp-footer { border-top: 1px solid var(--line); margin-top: 32px; padding-top: 12px; color: var(--muted);
+  font-size: .85rem; display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; }
+.pp-footer a, .pp-card a { color: var(--primary); }
+.stButton button, .stDownloadButton button, .stFormSubmitButton button { border-radius: var(--r); }
 pre, code { white-space: pre-wrap !important; overflow-wrap: anywhere; }
-[data-testid="stDataFrame"] { max-width: 100%; }
 [data-testid="column"], [data-testid="stColumn"] { min-width: 0 !important; }
-.pp-card, .pp-header { box-sizing: border-box; max-width: 100%; }
 @media (max-width: 640px) {
-  .block-container { padding-left: .8rem; padding-right: .8rem; }
-  .pp-name { font-size: 1.35rem; } .pp-tag { font-size: .85rem; }
-  .stButton button { width: 100%; }
+  .block-container { padding-left: 12px; padding-right: 12px; padding-top: 16px; }
+  .pp-hero { padding: 32px 8px 24px; }
+  .stButton button, .stFormSubmitButton button { width: 100%; }
+  [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 8px !important; }
+  [data-testid="stColumn"], [data-testid="column"] { flex: 1 1 100% !important; width: 100% !important; }
 }
 </style>""", unsafe_allow_html=True)
 
 ss = st.session_state
 ss.setdefault("history", [])
+ss.setdefault("dataset", None)              # {"kind": "demo"|"upload", "key", "label", "folder"}
 ss.setdefault("upload_dir", f"data/uploads/{uuid.uuid4().hex[:8]}")
+ss.setdefault("busy", False)
+ss.setdefault("user_name", "")
+ss.setdefault("planner", os.getenv("LLM_MODE", "cloud"))
+os.environ["LLM_MODE"] = ss["planner"]
 
 
 def esc(x) -> str:
     return html.escape(str(x))
 
 
-# ---- Sidebar (on phones this collapses into the menu button) ---------------
-with st.sidebar:
-    st.markdown("### Data")
-    source = st.radio("Where is your data?", ["Demo datasets", "Upload my files"], label_visibility="collapsed")
-    folder, dataset_key = None, None
-    if source == "Demo datasets":
-        demos = [d for d in DEMO_LABELS if (ROOT / "data" / d).is_dir()]
-        dataset_key = st.selectbox("Dataset", demos, format_func=lambda d: DEMO_LABELS[d])
-        folder = f"data/{dataset_key}"
-    else:
-        files = st.file_uploader("CSV, Excel, PDF or Word (tables are read from PDF/Word)",
-                                 type=["csv", "xlsx", "xls", "pdf", "docx"], accept_multiple_files=True)
-        if files:
-            sig = tuple((f.name, f.size) for f in files)
-            if ss.get("upload_sig") != sig:
-                written, errors = save_uploads([(f.name, f.getvalue()) for f in files], ROOT / ss["upload_dir"])
-                ss["upload_sig"], ss["upload_msgs"] = sig, (written, errors)
-                ss.pop("result", None)
-            written, errors = ss["upload_msgs"]
-            for e in errors:
-                st.error(e)
-            if written:
-                st.success(f"Loaded {len(written)} table(s): {', '.join(written)}")
-                folder = ss["upload_dir"]
-        else:
-            st.info("Upload one or more files. Put related tables together (e.g. orders + customers + exchange rates).")
-    st.markdown("---")
-    st.markdown("### How ProofPilot works")
-    for i, s in enumerate(["Load your tables", "Trap Radar checks the data", "AI turns your question into a plan",
-                           "A Python proof runs in a sandbox", "The proof is re-run in a fresh process",
-                           "Answer with proof, or refuse with the reason"], 1):
-        st.markdown(f'<span class="pp-step">{i}</span>{s}', unsafe_allow_html=True)
-    if ss["history"]:
-        st.markdown("---")
-        st.markdown("### History")
-        for h in ss["history"][:8]:
-            dot = {"answered": "🟢", "abstained": "🔴"}.get(h["status"], "⚪")
-            st.markdown(f"{dot} {esc(h['q'])}", unsafe_allow_html=True)
-
-# ---- Header ----------------------------------------------------------------
-mode = ss["result"]["llm_mode"] if ss.get("result") else "ready"
-st.markdown(f"""
-<div class="pp-header">
-  <a class="pp-logo" href="./" target="_self" title="ProofPilot home">
-    <div class="pp-mark">✓</div>
-    <div><div class="pp-name">ProofPilot</div><div class="pp-tag">Numbers you can check, not just trust.</div></div>
-  </a>
-  <span class="pp-pill" title="Which planner answered the last question">AI mode: {esc(mode)}</span>
-</div>""", unsafe_allow_html=True)
-
-tables = {}
-if not folder:
-    st.info("Pick a demo dataset or upload your files in the menu to start.")
-else:
+def online() -> bool:
     try:
-        tables = load_folder(folder)
+        socket.create_connection(("8.8.8.8", 53), timeout=0.8).close()
+        return True
+    except OSError:
+        return False
+
+
+@st.cache_data(show_spinner=False)
+def load(folder: str, stamp: float):
+    tables = load_folder(folder)
+    return tables, profile_all(tables)
+
+
+def current_data():
+    """(tables, flags, error) for the active dataset."""
+    d = ss["dataset"]
+    if not d:
+        return None, None, None
+    try:
+        stamp = max((p.stat().st_mtime for p in (ROOT / d["folder"]).glob("*.csv")), default=0)
+        tables, flags = load(d["folder"], stamp)
+        if not tables:
+            return None, None, "The dataset has no tables."
+        return tables, flags, None
     except Exception as e:  # noqa: BLE001
-        st.error(f"Couldn't load the data: {e}")
+        return None, None, f"Couldn't load the data: {e}"
 
-if tables:
-    flags = profile_all(tables)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Tables", len(tables))
-    c2.metric("Rows", f"{sum(len(t) for t in tables.values()):,}")
-    c3.metric("Traps found", len(flags))
 
-    with st.expander("Preview the data", expanded=False):
-        name = st.selectbox("Table", list(tables), key=f"preview_{folder}")
-        st.dataframe(tables[name].head(50), use_container_width=True)
+def go(page_key: str):
+    st.switch_page(PAGES[page_key])
 
-    st.subheader("🛰️ Trap Radar")
+
+def dataset_bar():
+    d = ss["dataset"]
+    c1, c2 = st.columns([3, 1])
+    if d:
+        c1.markdown(f'<div class="pp-label">Active dataset</div><b>{esc(d["label"])}</b>', unsafe_allow_html=True)
+        if c2.button("Change dataset", use_container_width=True):
+            go("datasets")
+    else:
+        c1.markdown('<div class="pp-label">Active dataset</div>None selected', unsafe_allow_html=True)
+        if c2.button("Choose a dataset", type="primary", use_container_width=True):
+            go("datasets")
+
+
+def trap_cards(flags):
     if not flags:
         st.success("No traps found. This data looks clean.")
-    else:
-        cols = st.columns(3)
-        for i, f in enumerate(flags):
-            where = f"{f['table']}.{f['column']}" if f["column"] != "*" else f["table"]
-            rows = f" · rows {', '.join(map(str, f['example_rows']))}" if f["example_rows"] else ""
-            cols[i % 3].markdown(
-                f'<div class="pp-card pp-trap {esc(f["severity"])}">'
-                f'<b>{TRAP_ICON.get(f["trap"], "⚠️")} {esc(TRAP_NAME.get(f["trap"], f["trap"]))}</b>'
-                f'{esc(f["message"])}<div class="pp-small">{esc(where)}{esc(rows)}</div></div>',
-                unsafe_allow_html=True)
+        return
+    cols = st.columns(3)
+    for i, f in enumerate(flags):
+        where = f"{f['table']}.{f['column']}" if f["column"] != "*" else f["table"]
+        rows = f" · rows {', '.join(map(str, f['example_rows']))}" if f["example_rows"] else ""
+        cols[i % 3].markdown(
+            f'<div class="pp-card pp-trap {esc(f["severity"])}"><b>{esc(TRAP_NAME.get(f["trap"], f["trap"]))}</b>'
+            f'<div>{esc(f["message"])}</div><div class="pp-muted">{esc(where)}{esc(rows)} · {esc(f["severity"])} severity'
+            f'</div></div>', unsafe_allow_html=True)
 
-    # ---- Ask ---------------------------------------------------------------
-    st.subheader("💬 Ask a question")
-    examples = EXAMPLES.get(dataset_key, GENERIC)
-    ex_cols = st.columns(len(examples))
-    for i, ex in enumerate(examples):
-        if ex_cols[i].button(ex, key=f"ex_{dataset_key}_{i}", use_container_width=True):
-            ss["question"] = ex
-            ss["run_now"] = True
-    with st.form("ask", border=False):
-        st.text_input("Your question", key="question", label_visibility="collapsed",
-                      placeholder="e.g. What was revenue from USD orders in January 2024?")
-        submitted = st.form_submit_button("Ask ProofPilot", type="primary", use_container_width=True)
-    if submitted or ss.pop("run_now", False):
-        question = ss.get("question", "").strip()
-        if not question:
-            st.warning("Type a question first.")
+
+# ============================== Pages ======================================
+def page_home():
+    st.markdown("""
+<div class="pp-hero">
+  <div class="name">ProofPilot</div>
+  <div class="tag">Numbers you can check, not just trust.</div>
+</div>""", unsafe_allow_html=True)
+    c = st.columns([1, 2, 2, 1])
+    if c[1].button("Choose a dataset", type="primary", use_container_width=True):
+        go("datasets")
+    if c[2].button("Ask a question", use_container_width=True, disabled=not ss["dataset"],
+                   help=None if ss["dataset"] else "Choose a dataset first"):
+        go("ask")
+
+    st.write("")
+    greet = f", {ss['user_name']}" if ss["user_name"] else ""
+    hour = dt.datetime.now().hour
+    st.markdown(f"### Good {'morning' if hour < 12 else 'afternoon' if hour < 17 else 'evening'}{greet}")
+    h = ss["history"]
+    m = st.columns(4)
+    m[0].metric("Questions asked", len(h))
+    m[1].metric("Answered with proof", sum(x["status"] == "answered" for x in h))
+    m[2].metric("Refused with reason", sum(x["status"] == "abstained" for x in h))
+    m[3].metric("Active dataset", ss["dataset"]["label"] if ss["dataset"] else "None")
+    st.divider()
+
+    left, right = st.columns([3, 2])
+    with left:
+        st.markdown("#### How it works")
+        st.markdown("""<ol class="pp-steps">
+<li>Pick a demo dataset or upload your own CSV, Excel, PDF or Word tables.</li>
+<li>Trap Radar checks the data first: duplicates, mixed currencies, ambiguous dates, blanks, tables that disagree.</li>
+<li>Ask in plain English. A plan becomes a small Python proof script.</li>
+<li>The proof runs, then runs again in a fresh process. Both results must match.</li>
+<li>You get the number with its proof, or a refusal that names the exact rows at fault.</li>
+</ol>""", unsafe_allow_html=True)
+    with right:
+        st.markdown("#### Recent activity")
+        if not h:
+            st.markdown('<div class="pp-card pp-muted">No questions yet. Your last questions will show here.</div>',
+                        unsafe_allow_html=True)
+        for x in h[:5]:
+            st.markdown(f'<div class="pp-card"><b>{esc(x["status"].title())}</b> · {esc(x["q"])}'
+                        f'<div class="pp-muted">{esc(x["time"])} · {esc(x["dataset"])}</div></div>',
+                        unsafe_allow_html=True)
+
+
+def page_datasets():
+    st.title("Datasets")
+    st.caption("Pick the data ProofPilot should answer from. Demo datasets and your own files are kept separate.")
+    tab_demo, tab_up = st.tabs(["Sample datasets", "Upload your files"])
+    with tab_demo:
+        for key, (label, desc) in DEMOS.items():
+            if not (ROOT / "data" / key).is_dir():
+                continue
+            active = bool(ss["dataset"] and ss["dataset"]["folder"] == f"data/{key}")
+            c1, c2 = st.columns([4, 1])
+            c1.markdown(f'<div class="pp-card"><b>{esc(label)}</b>{" · <span class=pp-badge>In use</span>" if active else ""}'
+                        f'<div class="pp-muted">{esc(desc)}</div></div>', unsafe_allow_html=True)
+            if c2.button("In use" if active else "Use this", key=f"use_{key}", disabled=active,
+                         use_container_width=True, type="secondary" if active else "primary"):
+                ss["dataset"] = {"kind": "demo", "key": key, "label": label, "folder": f"data/{key}"}
+                ss.pop("result", None)
+                st.toast(f"{label} selected")
+                st.rerun()
+    with tab_up:
+        st.markdown("**Files** <span class='pp-muted'>(required)</span>", unsafe_allow_html=True)
+        files = st.file_uploader("Files", type=["csv", "xlsx", "xls", "pdf", "docx"], accept_multiple_files=True,
+                                 label_visibility="collapsed",
+                                 help="CSV, Excel (one table per sheet), PDF or Word (tables inside are read). "
+                                      "Upload related tables together, e.g. orders + customers + exchange rates.")
+        st.caption("Accepted: CSV, XLSX, XLS, PDF, DOCX. Tables in PDF and Word files are read; plain paragraphs are not.")
+        name = st.text_input("Dataset name (optional)", placeholder="e.g. Q1 sales export",
+                             help="A short name so you can recognise this data in History.", max_chars=40)
+        if st.button("Load files", type="primary", disabled=not files):
+            with st.status("Reading your files…", expanded=True) as status:
+                written, errors = save_uploads([(f.name, f.getvalue()) for f in files], ROOT / ss["upload_dir"])
+                for e in errors:
+                    st.error(e)
+                if written:
+                    ss["dataset"] = {"kind": "upload", "key": None, "label": name.strip() or "My upload",
+                                     "folder": ss["upload_dir"]}
+                    ss.pop("result", None)
+                    status.update(label=f"Loaded {len(written)} table(s): {', '.join(written)}", state="complete")
+                else:
+                    status.update(label="No tables could be read from these files", state="error")
+        if not files:
+            st.info("No files chosen yet. Drag files into the box above or click Browse files.")
+
+    tables, flags, err = current_data()
+    if err:
+        st.error(err)
+    if tables:
+        st.divider()
+        st.subheader(ss["dataset"]["label"])
+        m = st.columns(3)
+        m[0].metric("Tables", len(tables))
+        m[1].metric("Rows", f"{sum(len(t) for t in tables.values()):,}")
+        m[2].metric("Traps found", len(flags))
+        st.markdown("#### Trap Radar")
+        trap_cards(flags)
+        with st.expander("Preview the tables"):
+            tname = st.selectbox("Table", list(tables), key=f"preview_{ss['dataset']['folder']}")
+            st.dataframe(tables[tname].head(100), use_container_width=True)
+        if st.button("Ask a question about this data", type="primary"):
+            go("ask")
+
+
+def run_pending(tables, flags):
+    q = ss.pop("pending", None)
+    if not q:
+        return
+    with st.status("Working on it…", expanded=True) as status:
+        st.write("Checking the question against the data")
+        try:
+            r = run_question(q, tables, flags)
+            st.write("Proof ran, then re-ran in a fresh process")
+        except Exception as e:  # noqa: BLE001
+            r = {"status": "error", "reason": f"Something went wrong: {e}", "answer": "", "value": None,
+                 "unit": "", "assumptions": [], "code": "", "proof_path": "", "rerun_match": False,
+                 "needed": "", "llm_mode": "error", "seconds": 0}
+        status.update(label={"answered": "Answered with proof", "abstained": "Refused with a reason"}
+                      .get(r["status"], "Couldn't answer"), state="error" if r["status"] == "error" else "complete")
+    r["question"] = q
+    ss["result"] = r
+    ss.pop("rerun", None)
+    ss["history"].insert(0, {"q": q, "status": r["status"], "answer": r["answer"], "reason": r["reason"],
+                             "proof": r["proof_path"], "dataset": ss["dataset"]["label"],
+                             "time": dt.datetime.now().strftime("%H:%M")})
+    ss["busy"] = False
+    st.rerun()
+
+
+def page_ask():
+    st.title("Ask")
+    dataset_bar()
+    tables, flags, err = current_data()
+    if err:
+        st.error(err)
+        return
+    if not tables:
+        ss["busy"] = False
+        st.markdown('<div class="pp-card"><b>No dataset selected</b><div class="pp-muted">Choose a sample dataset '
+                    'or upload your files, then come back here to ask.</div></div>', unsafe_allow_html=True)
+        return
+    if flags:
+        st.caption(f"Trap Radar found {len(flags)} issue(s) in this data. ProofPilot handles them or refuses.")
+    run_pending(tables, flags)
+    ss["busy"] = False
+
+    with st.form("ask"):
+        st.markdown("**Your question** <span class='pp-muted'>(required)</span>", unsafe_allow_html=True)
+        q = st.text_input("Your question", key="question", label_visibility="collapsed", max_chars=300,
+                          placeholder="e.g. What was revenue from USD orders in January 2024?")
+        st.caption("Ask about one number. Include a month or year, and a currency if the data has more than one.")
+        sent = st.form_submit_button("Ask ProofPilot", type="primary", use_container_width=True)
+    if sent:
+        q = (q or "").strip()
+        if not q:
+            st.error("Please type a question.")
+        elif len(q) < 8 or len(q.split()) < 2:
+            st.error("That's too short to answer. Try a full question, e.g. \"Total sales in May 2024\".")
         else:
-            with st.spinner("Checking the data and building the proof…"):
-                try:
-                    r = run_question(question, tables, flags)
-                except Exception as e:  # noqa: BLE001
-                    r = {"status": "error", "reason": f"Something went wrong: {e}", "answer": "", "value": None,
-                         "unit": "", "assumptions": [], "code": "", "proof_path": "", "rerun_match": False,
-                         "needed": "", "llm_mode": "error", "seconds": 0}
-            r["question"] = question
-            ss["result"] = r
-            ss.pop("rerun", None)
-            ss["history"].insert(0, {"q": question, "status": r["status"]})
+            ss["pending"], ss["busy"] = q, True
             st.rerun()
 
-    # ---- Result ------------------------------------------------------------
+    examples = EXAMPLES.get(ss["dataset"]["key"], GENERIC)
+    st.markdown('<div class="pp-label">Try one of these</div>', unsafe_allow_html=True)
+    cols = st.columns(2)
+    for i, ex in enumerate(examples):
+        if cols[i % 2].button(ex, key=f"ex_{i}", use_container_width=True):
+            ss["pending"], ss["busy"] = ex, True
+            st.rerun()
+
     r = ss.get("result")
     if r:
-        st.markdown(f"**Q:** {esc(r.get('question', ''))}")
-        if r["status"] == "answered":
-            if isinstance(r["value"], dict):
-                st.markdown('<div class="pp-card pp-answer"><div class="pp-big">Two possible answers</div>'
-                            '<div class="pp-small">A date in the data can be read two ways, so both are proven'
-                            '</div></div>', unsafe_allow_html=True)
-                mcols = st.columns(len(r["value"]))
-                for c, (k, v) in zip(mcols, r["value"].items()):
-                    shown = f"{v:,.2f} {r['unit']}".strip() if isinstance(v, float) else f"{v:,}"
-                    c.metric("If dates are " + k.replace("if_", ""), shown)
-            else:
-                st.markdown(f'<div class="pp-card pp-answer"><div class="pp-big">{esc(r["answer"])}</div>'
-                            f'<div class="pp-small">Verified ✔ re-run in a fresh process · {r["seconds"]}s · '
-                            f'planner: {esc(r["llm_mode"])}</div></div>', unsafe_allow_html=True)
-            st.success("Answer verified: the proof ran twice in fresh processes and gave the same result.")
-            tab1, tab2 = st.tabs(["🧾 How it was worked out", "🐍 Proof code"])
-            with tab1:
-                for a in r["assumptions"] or ["No traps touched this answer."]:
-                    st.markdown(f"- {a}")
-            with tab2:
-                st.code(r["code"], language="python")
-                b1, b2 = st.columns(2)
-                if b1.button("🔁 Re-run proof", use_container_width=True):
+        st.divider()
+        show_result(r)
+
+
+def show_result(r):
+    st.markdown(f'<div class="pp-label">Question</div>{esc(r.get("question", ""))}', unsafe_allow_html=True)
+    if r["status"] == "answered":
+        if isinstance(r["value"], dict):
+            st.markdown('<div class="pp-card pp-answer"><div class="pp-label">Answer · two readings</div>'
+                        '<div class="pp-big">It depends on the date format</div><div class="pp-muted">Some dates can '
+                        'be read two ways, so both answers are proven.</div></div>', unsafe_allow_html=True)
+            mcols = st.columns(len(r["value"]))
+            for c, (k, v) in zip(mcols, r["value"].items()):
+                shown = f"{v:,.2f} {r['unit']}".strip() if isinstance(v, float) else f"{v:,}"
+                c.metric("If dates are " + k.replace("if_", ""), shown)
+        else:
+            st.markdown(f'<div class="pp-card pp-answer"><div class="pp-label">Answer</div>'
+                        f'<div class="pp-big">{esc(r["answer"])}</div><div class="pp-muted">Verified: the proof ran '
+                        f'twice in fresh processes and gave the same result · {r["seconds"]}s · planner: '
+                        f'{esc(r["llm_mode"])}</div></div>', unsafe_allow_html=True)
+        tab1, tab2 = st.tabs(["How it was worked out", "Proof code"])
+        with tab1:
+            for a in r["assumptions"] or ["No traps touched this answer."]:
+                st.markdown(f"- {a}")
+        with tab2:
+            st.code(r["code"], language="python")
+            b1, b2 = st.columns(2)
+            if b1.button("Re-run proof", use_container_width=True):
+                with st.spinner("Re-running in a fresh process…"):
                     try:
                         ss["rerun"] = rerun_proof(r["proof_path"])
                     except Exception as e:  # noqa: BLE001
                         ss["rerun"] = {"match": False, "value": str(e)}
-                p = ROOT / r["proof_path"] if r["proof_path"] else None
-                if p and p.exists():
-                    b2.download_button("⬇️ Download proof", p.read_text(), file_name=p.name,
-                                       mime="text/x-python", use_container_width=True)
-                if "rerun" in ss:
-                    if ss["rerun"]["match"]:
-                        st.success(f"Re-ran in a fresh process: same answer ({ss['rerun']['value']}) ✔")
-                    else:
-                        st.error(f"Re-run did NOT match: {ss['rerun']['value']}")
-                st.caption(f"Run it yourself:  python {r['proof_path']}")
-        elif r["status"] == "abstained":
-            st.markdown(f'<div class="pp-card pp-refuse"><div class="pp-big">I can\'t answer this reliably</div>'
-                        f'<p><b>Why:</b> {esc(r["reason"])}</p><p><b>What I\'d need:</b> {esc(r["needed"])}</p>'
-                        f'</div>', unsafe_allow_html=True)
-            st.info("Refusing is on purpose: a confident wrong number is worse than an honest \"I can't tell\".")
-            if r.get("code"):
-                with st.expander("🐍 The proof that found the problem"):
-                    st.code(r["code"], language="python")
-        else:
-            st.markdown(f'<div class="pp-card pp-error"><div class="pp-big">Something went wrong</div>'
-                        f'<p>{esc(r["reason"])}</p></div>', unsafe_allow_html=True)
-            st.error("Try rephrasing the question, e.g. include a month and a currency.")
+            p = ROOT / r["proof_path"] if r["proof_path"] else None
+            if p and p.exists():
+                b2.download_button("Download proof (.py)", p.read_text(), file_name=p.name,
+                                   mime="text/x-python", use_container_width=True)
+            if "rerun" in ss:
+                if ss["rerun"]["match"]:
+                    st.success(f"Re-ran in a fresh process: same answer ({ss['rerun']['value']}).")
+                else:
+                    st.error(f"Re-run did not match: {ss['rerun']['value']}")
+            st.caption(f"Run it yourself:  python {r['proof_path']}")
+    elif r["status"] == "abstained":
+        st.markdown(f'<div class="pp-card pp-refuse"><div class="pp-label">Refused</div>'
+                    f'<div class="pp-big">I can\'t answer this reliably</div>'
+                    f'<p><b>Why:</b> {esc(r["reason"])}</p><p><b>What would fix it:</b> {esc(r["needed"])}</p>'
+                    f'</div>', unsafe_allow_html=True)
+        st.caption("Refusing is on purpose: a confident wrong number is worse than an honest \"I can't tell\".")
+        if r.get("code"):
+            with st.expander("The proof that found the problem"):
+                st.code(r["code"], language="python")
+    else:
+        st.markdown(f'<div class="pp-card pp-error"><div class="pp-label">Error</div>'
+                    f'<div class="pp-big">Something went wrong</div><p>{esc(r["reason"])}</p></div>',
+                    unsafe_allow_html=True)
+        st.info("Try rephrasing the question, e.g. include a month and a currency.")
 
-# ---- Footer ----------------------------------------------------------------
+
+def page_history():
+    st.title("History")
+    h = ss["history"]
+    if not h:
+        st.markdown('<div class="pp-card"><b>No questions yet</b><div class="pp-muted">Questions you ask on the Ask '
+                    'page show up here with their answer and proof file.</div></div>', unsafe_allow_html=True)
+        if st.button("Ask a question", type="primary"):
+            go("ask")
+        return
+    search = st.text_input("Search", placeholder="e.g. January", help="Filters by question text.")
+    status = st.radio("Show", ["All", "Answered", "Refused", "Errors"], horizontal=True)
+    want = {"Answered": "answered", "Refused": "abstained", "Errors": "error"}.get(status)
+    rows = [x for x in h if (not want or x["status"] == want) and search.lower() in x["q"].lower()]
+    st.caption(f"{len(rows)} of {len(h)} question(s)")
+    if not rows:
+        st.info("Nothing matches this filter.")
+    for x in rows:
+        cls = {"answered": "pp-answer", "abstained": "pp-refuse"}.get(x["status"], "pp-error")
+        body = esc(x["answer"]) if x["status"] == "answered" else esc(x["reason"])
+        st.markdown(f'<div class="pp-card {cls}"><b>{esc(x["q"])}</b><div>{body}</div><div class="pp-muted">'
+                    f'{esc(x["time"])} · {esc(x["dataset"])}{" · " + esc(x["proof"]) if x["proof"] else ""}</div></div>',
+                    unsafe_allow_html=True)
+
+
+def reset_session():
+    shutil.rmtree(ROOT / ss["upload_dir"], ignore_errors=True)
+    for k in list(ss.keys()):
+        del ss[k]
+
+
+def page_settings():
+    st.title("Settings")
+    t_acc, t_ai, t_app, t_data, t_priv, t_about = st.tabs(["Account", "AI planner", "Appearance", "Data",
+                                                           "Privacy & security", "About"])
+    with t_acc:
+        st.markdown("ProofPilot runs on this computer and has no sign-in, so there is no password or account to "
+                    "manage. Your name is only used for the greeting on Home.")
+        with st.form("account"):
+            n = st.text_input("Display name (optional)", value=ss["user_name"], max_chars=30, placeholder="e.g. Daniel")
+            if st.form_submit_button("Save", type="primary"):
+                ss["user_name"] = n.strip()
+                st.success("Saved.")
+        if st.button("End session", help="Clears your name, dataset choice, history and uploads from this browser tab."):
+            reset_session()
+            st.success("Session ended. Everything from this tab was cleared.")
+    with t_ai:
+        net = online()
+        st.markdown(f"Internet: **{'connected' if net else 'offline'}**")
+        if not net:
+            st.warning("You're offline. Cloud AI won't work; ProofPilot falls back to local AI, cached replies, "
+                       "then the rule planner, so answers still work.")
+        modes = list(PLANNERS)
+        choice = st.radio("Planner order", modes, format_func=PLANNERS.get,
+                          index=modes.index(ss.get("planner")) if ss.get("planner") in modes else 0)
+        if choice != ss.get("planner"):
+            ss["planner"] = os.environ["LLM_MODE"] = choice
+            st.success(f"Planner set: {PLANNERS[choice]}.")
+        st.caption("Whichever planner is used, the number always comes from running the proof, never from the AI. "
+                   "If the AI's plan is invalid, the rule planner takes over.")
+    with t_app:
+        st.markdown("Light and dark mode follow your system. To switch, open the ⋮ menu (top right), then "
+                    "Settings, then Theme.")
+    with t_data:
+        st.markdown("**Export**")
+        st.download_button("Export history (JSON)", json.dumps(ss.get("history", []), indent=2),
+                           file_name="proofpilot_history.json", mime="application/json",
+                           disabled=not ss.get("history"))
+        st.markdown("**Import**")
+        st.caption("Import data on the Datasets page (CSV, Excel, PDF or Word).")
+        if st.button("Go to Datasets"):
+            go("datasets")
+        st.markdown("**Clear**")
+        c1, c2 = st.columns(2)
+        if c1.button("Clear history", disabled=not ss.get("history"), use_container_width=True):
+            ss["history"].clear()
+            ss.pop("result", None)
+            st.success("History cleared.")
+        if c2.button("Delete my uploaded files", use_container_width=True):
+            shutil.rmtree(ROOT / ss["upload_dir"], ignore_errors=True)
+            if ss["dataset"] and ss["dataset"]["kind"] == "upload":
+                ss["dataset"] = None
+            st.success("Uploaded files deleted from this computer.")
+    with t_priv:
+        st.markdown("""
+- **Your data stays here.** Uploaded files are saved only on this computer, in `data/uploads/`.
+- **With the rule planner or local AI, nothing leaves the laptop.** With cloud AI, only column names, 3 sample rows and your question are sent to build the plan.
+- **Proof code is sandboxed.** Before it runs, a safety check allows only pandas, numpy, json, math, datetime, pathlib, re and hashlib, and blocks calls like `eval`, `exec` and `open`. It runs in a separate process with a 20-second limit.
+- **Tampering is caught.** Each proof stores a fingerprint of the data; a re-run on edited files fails the check.""")
+    with t_about:
+        st.markdown(f"""
+**ProofPilot {VERSION}** · HackNex 2026 · HNX26PSI08 Proof-Carrying Data Analyst
+Team: Daniel, Ajay, Aaron, Gladys
+
+- Source code and README: [{REPO_URL}]({REPO_URL})
+- Terms, scope note and declared resources: [README]({REPO_URL}#readme)
+- Contact support: [open an issue]({SUPPORT_URL})""")
+
+
+def page_help():
+    st.title("Help")
+    st.markdown("#### Quick start")
+    st.markdown("""<ol class="pp-steps">
+<li>Open <b>Datasets</b> and press <b>Use this</b> on Nimbus Retail (or upload your files).</li>
+<li>Read the Trap Radar: the problems found in the data before any question is asked.</li>
+<li>Open <b>Ask</b>, type a question or press an example.</li>
+<li>Open <b>Proof code</b> and press <b>Re-run proof</b>, or download it and run <code>python proofs/q_1.py</code>.</li>
+</ol>""", unsafe_allow_html=True)
+    st.markdown("#### Common questions")
+    faq = {
+        "Why did it refuse my question?": "It refuses when the answer would be a guess: a blank value inside the "
+            "rows you asked about, two tables that disagree, a missing exchange rate, a period or name that isn't in "
+            "the data, a concept with no column (like profit), or a \"why\" question. The refusal says what would fix it.",
+        "Why did I get two answers?": "Some dates like 03/04/2024 can mean 3 April or 4 March. If that changes the "
+            "answer, both readings are computed and proven.",
+        "What does \"proof\" mean here?": "A standalone Python file that reads the original CSV files and prints "
+            "RESULT=... . Anyone can run it and get the same number. The answer text is copied from that output.",
+        "Which files can I upload?": "CSV, Excel (each sheet becomes a table), and PDF or Word files that contain "
+            "tables. Upload related tables together so they can be joined, e.g. on customer_id.",
+        "Does it need the internet?": "No. Without internet it uses local AI if installed, else the built-in rule "
+            "planner. Answers and proofs work the same.",
+    }
+    for q, a in faq.items():
+        with st.expander(q):
+            st.write(a)
+    st.markdown(f"#### Support\nSomething broken? [Open an issue]({SUPPORT_URL}) or read the "
+                f"[README]({REPO_URL}#readme).")
+
+
+PAGES = {
+    "home": st.Page(page_home, title="Home", url_path="home", default=True),
+    "datasets": st.Page(page_datasets, title="Datasets", url_path="datasets"),
+    "ask": st.Page(page_ask, title="Ask", url_path="ask"),
+    "history": st.Page(page_history, title="History", url_path="history"),
+    "settings": st.Page(page_settings, title="Settings", url_path="settings"),
+    "help": st.Page(page_help, title="Help", url_path="help"),
+}
+st.navigation(list(PAGES.values()), position="top").run()
+
 st.markdown(f"""
 <div class="pp-footer">
-  <span>© {dt.date.today().year} ProofPilot · HackNex 2026 · HNX26PSI08</span>
+  <span>© {dt.date.today().year} ProofPilot · HackNex 2026 · HNX26PSI08 · v{VERSION}</span>
   <span><a href="{REPO_URL}" target="_blank" rel="noopener">Source code</a> ·
   <a href="{REPO_URL}#readme" target="_blank" rel="noopener">How to reproduce</a> ·
-  <a href="{REPO_URL}/issues" target="_blank" rel="noopener">Report a problem</a></span>
+  <a href="{SUPPORT_URL}" target="_blank" rel="noopener">Report a problem</a></span>
 </div>""", unsafe_allow_html=True)

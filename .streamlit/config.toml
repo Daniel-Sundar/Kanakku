@@ -1,0 +1,10 @@
+[theme]
+primaryColor = "#0f5c4a"
+font = "sans serif"
+baseRadius = "small"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
