@@ -9,7 +9,7 @@ import re
 import pandas as pd
 
 import llm_client
-from proof_template import TEMPLATE
+from proof_template import LOOKUP_TEMPLATE, TEMPLATE
 
 MONTHS = ["january", "february", "march", "april", "may", "june", "july",
           "august", "september", "october", "november", "december"]
@@ -93,9 +93,63 @@ def rule_plan(question: str, s: dict) -> dict:
             plan.update(currency_mode="convert", currency=cur)
     for col, values in s["dims"].items():
         for v in values:
-            if re.search(rf"\b{re.escape(v.lower())}\b", q):
+            if mentions(q, v):
                 plan["filters"][col] = v
     return plan
+
+
+def _squash(x: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(x).lower())
+
+
+def mentions(q: str, value: str) -> bool:
+    """'Tamil Nadu' matches 'tamil nadu' and 'tamilnadu'."""
+    if re.search(rf"\b{re.escape(str(value).lower())}\b", q.lower()):
+        return True
+    v = _squash(value)
+    return len(v) >= 5 and " " in str(value).strip() and v in _squash(q)
+
+
+# ---------- list questions: "list the buyers in Tamil Nadu" -----------------------
+LIST_WORDS = re.compile(r"^\s*(please\s+)?(list|show|name|give|tell|which|who)\b|\blist (of|me|all)\b", re.I)
+NUMBER_WORDS = re.compile(r"\b(total|revenue|sum|average|mean|amount|value|spent|sales from|how much)\b", re.I)
+
+
+def lookup_plan(question: str, tables: dict, s: dict):
+    """A plan for listing or counting entities (buyers, customers, stalls), or None if this isn't one."""
+    q = question.lower()
+    key = s["key_col"]
+    if not key:
+        return None
+    dim_tables = [n for n, t in tables.items() if n != s["fact"] and key in t.columns]
+    if not dim_tables:
+        return None
+    stems = {re.sub(r"s$", "", w) for n in dim_tables for w in re.split(r"[_\W]+", n.lower()) if len(w) > 3}
+    stems.add(key.lower().replace("_id", ""))
+    entity_named = any(re.search(rf"\b{re.escape(st)}s?\b", q) for st in stems)
+    counting = bool(re.search(r"\bhow many\b|\bnumber of\b|\bcount\b", q))
+    if not entity_named or NUMBER_WORDS.search(q) or not (LIST_WORDS.search(q) or counting):
+        return None
+    if counting and re.search(r"\b(orders?|sales?|invoices?|transactions?|bills?)\b", q):
+        return None                  # "how many orders" counts fact rows, handled by the normal plan
+    filters = {}
+    for n in dim_tables:
+        for c in tables[n].columns:
+            if c != key and not pd.api.types.is_numeric_dtype(tables[n][c]) and tables[n][c].nunique() <= 50:
+                for v in tables[n][c].dropna().unique():
+                    if mentions(q, v):
+                        filters[c] = str(v)
+    hinted = [n for n in dim_tables if _squash(n) in _squash(q) or _squash(re.sub(r"s$", "", n)) in _squash(q)]
+    use = hinted[:1] or [n for n in dim_tables if all(c in tables[n].columns for c in filters)]
+    return {"kind": "lookup", "tables": use, "key": key, "filters": filters, "count": counting,
+            "entity": next((st for st in stems if re.search(rf"\b{re.escape(st)}s?\b", q)), key) + "s"}
+
+
+def make_lookup_proof(question: str, plan: dict, data_rel: str, proof_path: str) -> str:
+    return LOOKUP_TEMPLATE.format(
+        question=question.replace('"""', "'''"), proof_path=proof_path,
+        data_rel=" / ".join(repr(p) for p in data_rel.split("/")),
+        tables=plan["tables"], key=plan["key"], filters=plan["filters"], count=plan["count"])
 
 
 # ---------- plan from the AI ------------------------------------------------

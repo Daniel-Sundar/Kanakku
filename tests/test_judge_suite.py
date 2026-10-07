@@ -278,3 +278,30 @@ def test_nimbus_date_ranges(q, lo, hi):
     rate = o.order_date.str[:7].map(dict(zip(fx.month, fx.eur_to_usd.astype(float))))
     amt = pd.to_numeric(o.amount) * rate.where(o.currency == "EUR", 1.0)
     check_answer(ask("nimbus_retail", q), "answered", round(float(amt.sum()), 2))
+
+
+# ---------- 10. List / count questions vs the oracle : 4 ----------
+def _dim(table, col, val):
+    t = pd.read_csv(ROOT / f"data/nimbus_retail/{table}.csv", dtype=str)
+    return sorted(f"{r.customer_id} {r['name']}" for _, r in t[t[col] == val].iterrows())
+
+
+def test_list_north_customers():
+    r = ask("nimbus_retail", "List the customers in the North region")
+    assert r["status"] == "answered" and r["value"] == _dim("customers_billing", "region", "North") == _dim("customers_crm", "region", "North")
+    assert engine.rerun_proof(r["proof_path"])["match"]
+
+
+def test_count_with_contradiction_refuses():
+    r = ask("nimbus_retail", "How many customers are in the West region?")
+    assert r["status"] == "abstained" and "C17" in r["reason"]
+
+
+def test_list_from_named_table():
+    r = ask("nimbus_retail", "List the customers in the West region using customers_crm")
+    assert r["status"] == "answered" and r["value"] == _dim("customers_crm", "region", "West")
+
+
+def test_list_stalls_squashed_name():
+    r = ask("canteen", "list the stalls in hostelblock")
+    assert r["status"] == "answered" and r["value"] == ["S3 Chai Adda", "S4 Biryani Hub"]

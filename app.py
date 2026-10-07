@@ -131,6 +131,8 @@ if ss["theme"] == "dark":
 .stApp pre, .stApp code, [data-testid="stCode"] > div { background: #1b2320 !important; color: #e6ece9 !important; }
 [data-testid="stSidebarNavLink"][aria-current="page"], [data-testid="stSidebarNavLink"]:hover { background: #232d29 !important; }
 .stTabs [data-baseweb="tab-list"] { border-color: #34413c; }
+[data-testid="stExpander"] summary, [data-testid="stExpander"] details > div { background: #1b2320 !important; color: #e6ece9 !important; }
+[data-testid="stElementToolbar"], [data-testid="stElementToolbar"] button { background: #232d29 !important; color: #e6ece9 !important; }
 .stApp ::placeholder { color: #9fb0a9 !important; opacity: 1; }
 [data-testid="stChatMessageAvatarCustom"], [data-testid^="stChatMessageAvatar"] { background: #232d29 !important; color: #e6ece9 !important; border-color: #34413c !important; }
 </style>""", unsafe_allow_html=True)
@@ -366,7 +368,7 @@ def page_ask():
         with st.chat_message("assistant", avatar=":material/fact_check:"):
             show_result(r, i)
 
-    q = st.chat_input("Ask about one number, e.g. Total revenue from 2024-01-02 to 2024-02-06 in USD", max_chars=300)
+    q = st.chat_input("Ask a total, count, average or list, e.g. Total revenue from 2024-01-02 to 2024-02-06 in USD", max_chars=300)
     q = ss.pop("pending", None) or q
     if q is not None:
         q = q.strip()
@@ -388,6 +390,12 @@ def show_result(r, i=0):
             for c, (k, v) in zip(mcols, r["value"].items()):
                 shown = f"{v:,.2f} {r['unit']}".strip() if isinstance(v, float) else f"{v:,}"
                 c.metric("If dates are " + k.replace("if_", ""), shown)
+        elif r.get("unit") == "list":
+            items = "".join(f"<li>{esc(x)}</li>" for x in r["value"])
+            st.markdown(f'<div class="pp-card pp-answer"><div class="pp-label">Answer</div>'
+                        f'<div class="pp-big">{esc(r["answer"].split(":")[0])}</div><ul>{items}</ul>'
+                        f'<div class="pp-muted">Verified: the proof ran twice in fresh processes and gave the same '
+                        f'list · {r["seconds"]}s</div></div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="pp-card pp-answer"><div class="pp-label">Answer</div>'
                         f'<div class="pp-big">{esc(r["answer"])}</div><div class="pp-muted">Verified: the proof ran '

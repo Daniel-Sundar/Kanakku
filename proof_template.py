@@ -191,3 +191,45 @@ assumptions.append(f"date of {{', '.join(label(i) for i in in_play)}} is ambiguo
 finish(value={{f"if_{{r}}": v for r, v in values.items()}}, unit=unit,
        rows_used={{f"if_{{r}}": res["rows"] for r, res in results.items()}}, assumptions=assumptions)
 '''
+
+
+LOOKUP_TEMPLATE = r'''"""ProofPilot proof (list/count): {question}
+Re-run it yourself:  python {proof_path}
+"""
+from pathlib import Path
+import hashlib
+import json
+import pandas as pd
+
+DATA = Path(__file__).resolve().parents[1] / {data_rel}
+TABLES = {tables!r}          # where the list comes from
+KEY = {key!r}
+FILTERS = {filters!r}
+COUNT = {count!r}            # True: answer is how many; False: the list itself
+
+FINGERPRINT = hashlib.sha256(b"".join(p.read_bytes() for p in sorted(DATA.glob("*.csv")))).hexdigest()[:16]
+
+def finish(**kw):
+    kw["data_fingerprint"] = FINGERPRINT
+    print("RESULT=" + json.dumps(kw))
+    raise SystemExit(0)
+
+squash = lambda x: "".join(ch for ch in str(x).lower() if ch.isalnum())
+answers = {{}}
+for name in TABLES:
+    t = pd.read_csv(DATA / f"{{name}}.csv", dtype=str, skipinitialspace=True).drop_duplicates()
+    for col, want in FILTERS.items():
+        t = t[t[col].map(squash) == squash(want)]
+    label_col = next((c for c in t.columns if "name" in c.lower()), None)
+    answers[name] = sorted(f"{{r[KEY]}} {{r[label_col]}}".strip() if label_col else str(r[KEY]) for _, r in t.iterrows())
+# Trap: two tables listing the same things differently
+lists = list(answers.values())
+if any(set(x) != set(lists[0]) for x in lists[1:]):
+    a, b = list(answers)[:2]
+    only = sorted(set(answers[a]) ^ set(answers[b]))
+    finish(abstain=f"{{a}} and {{b}} disagree about {{', '.join(only)}}",
+           needed=f"which table is correct, or name one table in the question (e.g. 'use {{a}}')")
+rows = lists[0] if lists else []
+assumptions = [f"from {{', '.join(TABLES)}}"] + [f"{{c}} = {{v}}" for c, v in FILTERS.items()]
+finish(value=len(rows) if COUNT else rows, unit="items" if COUNT else "list", rows_used=rows, assumptions=assumptions)
+'''

@@ -73,6 +73,10 @@ else:
             return done(status="abstained", answer="I can't determine this reliably.",
                         reason=f"{', '.join(unknown)} doesn't appear anywhere in the data, so any number would be a guess.",
                         needed="Check the spelling, or use a name that is in the data.")
+        # Listing or counting things (buyers, customers, stalls) rather than adding up money.
+        lp = planner.lookup_plan(question, tables, s)
+        if lp:
+            return _run_lookup(question, lp, tables, done)
         if not s["value_col"] or not s["date_col"]:
             return done(status="error", reason="Couldn't find a date column and a numeric amount column.")
 
@@ -126,6 +130,39 @@ else:
                     assumptions=(["Scope: " + ", ".join(scope)] if scope else []) + res.get("assumptions", [])
                     + ([f"Data fingerprint {fp}: re-runs check it, so any edit to the CSVs is caught"] if fp else []),
                     code=code, proof_path=proof_path, rerun_match=True, llm_mode=mode)
+
+    def _run_lookup(question, lp, tables, done):
+        proof_path = _next_proof()
+        code = planner.make_lookup_proof(question, lp, _data_dir(tables), proof_path)
+        problems = executor.check_code(code)
+        if problems or verifier.is_literal_proof(code):
+            return done(status="error", reason="Proof failed the safety check: " + "; ".join(problems or ["reads no data"]),
+                        code=code)
+        (ROOT / proof_path).write_text(code)
+        first = executor.run_file(ROOT / proof_path)
+        if not first["ok"]:
+            return done(status="error", reason=f"The proof crashed: {first['error']}", code=code, proof_path=proof_path)
+        res = first["result"]
+        verifier.remember(proof_path, res)
+        again = verifier.rerun(proof_path)
+        if "abstain" in res:
+            return done(status="abstained", answer="I can't determine this reliably.", reason=res["abstain"],
+                        needed=res["needed"], code=code, proof_path=proof_path, rerun_match=again["match"])
+        if not again["match"]:
+            return done(status="error", reason="The proof gave a different result when re-run.", code=code,
+                        proof_path=proof_path)
+        v = res["value"]
+        where = " and ".join(f"{c} = {x}" for c, x in lp["filters"].items())
+        if lp["count"]:
+            answer = f"{v} {lp['entity']}" + (f" with {where}" if where else "")
+        elif not v:
+            answer = f"No {lp['entity']}" + (f" with {where}" if where else "") + "."
+        else:
+            answer = f"{len(v)} {lp['entity']}" + (f" with {where}" if where else "") + ": " + ", ".join(v)
+        fp = res.get("data_fingerprint")
+        return done(answer=answer, value=v, unit=res["unit"], code=code, proof_path=proof_path, rerun_match=True,
+                    assumptions=["Scope: " + ", ".join(res.get("assumptions", []))]
+                    + ([f"Data fingerprint {fp}: re-runs check it, so any edit to the CSVs is caught"] if fp else []))
 
     def rerun_proof(proof_path: str) -> dict:
         out = verifier.rerun(proof_path)
