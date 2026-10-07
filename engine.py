@@ -82,7 +82,9 @@ else:
         if lp:
             return _run_lookup(question, lp, tables, done)
         if not s["value_col"] or not s["date_col"]:
-            return done(status="error", reason="Couldn't find a date column and a numeric amount column.")
+            return done(status="error", reason=f"The loaded table(s) ({', '.join(tables)}) have no date column with "
+                        "an amount column next to it, so there is nothing to add up.",
+                        needed="Upload the sales/orders/invoices table too (all related files together).")
 
         plan, mode = planner.llm_plan(question, s, tables)
         if plan is None:

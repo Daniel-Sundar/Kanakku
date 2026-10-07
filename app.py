@@ -448,7 +448,7 @@ def show_result(r, i=0):
     else:
         st.markdown(f'<div class="pp-card pp-error"><div class="pp-label">Error</div>'
                     f'<div class="pp-big">Something went wrong</div><p>{esc(r["reason"])}</p>'
-                    f'<p class="pp-muted">Try rephrasing, e.g. include a month and a currency.</p></div>',
+                    f'<p class="pp-muted">{esc(r.get("needed") or "Try rephrasing, e.g. include a month and a currency.")}</p></div>',
                     unsafe_allow_html=True)
 
 
