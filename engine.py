@@ -90,6 +90,13 @@ else:
         if plan is None:
             plan, mode = planner.rule_plan(question, s), "rules"
 
+        if plan.get("currency") and not s["currency_col"]:
+            # No currency column: we can't tell which rows are USD, and relabelling the total would be a lie.
+            return done(status="abstained", answer="I can't determine this reliably.", llm_mode=mode,
+                        reason=f"The data has no currency column, so ProofPilot can't tell which amounts are in "
+                               f"{plan['currency']} or convert them. Putting a {plan['currency']} sign on the "
+                               "stored numbers would be a guess.",
+                        needed="A currency column for each row (or ask without a currency to get the total as stored).")
         proof_path = _next_proof()
         code = planner.make_proof(question, plan, s, _data_dir(tables), proof_path)
         problems = executor.check_code(code)

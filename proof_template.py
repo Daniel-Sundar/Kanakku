@@ -29,6 +29,11 @@ CURRENCY_MODE = {currency_mode!r}   # filter | convert | none
 CURRENCY = {currency!r}
 KEY_COL = {key_col!r}           # join key to the dimension tables
 FILTERS = {filters!r}           # e.g. {{"region": "North"}} looked up in the other tables
+FX_REFERENCE = {fx_reference!r}   # True: the question asked for standard rates when the data has none
+# Built-in reference rates (units per 1 USD, approximate 2024-2026 averages, not live).
+# Used only when the data has no rate table at all, or when the question asks for standard rates.
+REFERENCE_PER_USD = {{"USD": 1.0, "INR": 85.0, "EUR": 0.92, "GBP": 0.78, "AED": 3.6725, "SAR": 3.75, "JPY": 150.0,
+                     "CNY": 7.2, "SGD": 1.34, "AUD": 1.52, "CAD": 1.37, "CHF": 0.88, "LKR": 300.0, "MYR": 4.5}}
 # ----------------------------------------------------------------------------
 
 # Fingerprint of the exact data this proof read: if anyone edits a CSV, the fingerprint changes.
@@ -91,14 +96,27 @@ if DATE_COL:
             ambiguous.append(i)
 
 def fx_rate(src, dst, month):
-    """Look for a table with a month column and a column named like eur_to_usd."""
+    """The data's own rate first (a month column plus a column like eur_to_usd, or its inverse usd_to_eur)."""
+    has_table = False
     for t in tables.values():
-        col = f"{{src}}_to_{{dst}}".lower()
         cols = {{c.lower(): c for c in t.columns}}
-        if "month" in cols and col in cols:
-            row = t[t[cols["month"]] == month]
-            if len(row):
-                return float(row[cols[col]].iloc[0])
+        if "month" not in cols:
+            continue
+        for name, flip in ((f"{{src}}_to_{{dst}}".lower(), False), (f"{{dst}}_to_{{src}}".lower(), True)):
+            if name in cols:
+                has_table = True
+                row = t[t[cols["month"]] == month]
+                rate = pd.to_numeric(row[cols[name]], errors="coerce").dropna()
+                if len(rate):
+                    return 1 / float(rate.iloc[0]) if flip else float(rate.iloc[0])
+    # No rate in the data: use the built-in reference rate only if the data has no rate table for this
+    # pair at all, or the question asked for standard rates. A month missing from a real table stays a refusal.
+    if (FX_REFERENCE or not has_table) and src in REFERENCE_PER_USD and dst in REFERENCE_PER_USD:
+        rate = REFERENCE_PER_USD[dst] / REFERENCE_PER_USD[src]
+        note = f"no {{src}} to {{dst}} rate in the data for {{month}}, so the built-in reference rate 1 {{src}} = {{rate:.4f}} {{dst}} was used"
+        if note not in assumptions:
+            assumptions.append(note)
+        return rate
     return None
 
 def compute(reading):
@@ -154,7 +172,8 @@ def compute(reading):
                 rate = fx_rate(cur, CURRENCY, r["_month"])
                 if rate is None:
                     return {{"abstain": f"no {{cur}} to {{CURRENCY}} rate for {{r['_month']}} ({{label(i)}} needs it)",
-                            "needed": f"the {{cur}} to {{CURRENCY}} rate for {{r['_month']}}"}}
+                            "needed": f"the {{cur}} to {{CURRENCY}} rate for {{r['_month']}}, or add 'using standard rates' "
+                                      "to the question to use the built-in reference rates"}}
                 vals.append(r[VALUE_COL] * rate)
             d = d.assign(**{{VALUE_COL: vals}}) if len(d) else d
         elif len(curs) > 1:

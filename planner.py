@@ -111,6 +111,9 @@ def rule_plan(question: str, s: dict) -> dict:
         plan["months"] = [f"{year}-{m:02d}" for m in found]
     elif year:
         plan["months"] = [f"{year}-{m:02d}" for m in range(1, 13)]
+    plan["fx_reference"] = bool(re.search(
+        r"\b(standard|market|reference|world|official|current|live|default|global|international)\s+"
+        r"(fx\s+|exchange\s+|conversion\s+|currency\s+)?(rates?|conversion|metrics?)\b", q))
     for cur in s["currencies"] or ["USD", "EUR", "INR"]:
         c = cur.lower()
         if re.search(rf"\b{c}\s+(orders?|sales?|transactions?|payments?|invoices?|bills?|receipts?)\b|\b(orders|sales|invoices|bills)\s+(in|paid in|billed in)\s+{c}\b", q):
@@ -256,7 +259,7 @@ def llm_plan(question: str, s: dict, tables: dict):
         plan["days"] = exact["days"]
         if exact["days"] or (exact["months"] and not plan["months"]):
             plan["months"] = exact["months"]
-        for k in ("value_col", "assumed_year"):
+        for k in ("value_col", "assumed_year", "fx_reference"):
             if k in exact:
                 plan[k] = exact[k]
         for k, v in exact["filters"].items():
@@ -315,4 +318,4 @@ def make_proof(question: str, plan: dict, s: dict, data_rel: str, proof_path: st
         fact=s["fact"], date_col=s["date_col"], value_col=None if plan["agg"] == "count" else plan.get("value_col") or s["value_col"],
         agg=plan["agg"], months=plan["months"], days=plan.get("days") or [], currency_col=s["currency_col"],
         currency_mode=plan["currency_mode"] if s["currency_col"] else "none", currency=plan["currency"],
-        key_col=s["key_col"], filters=plan["filters"])
+        key_col=s["key_col"], filters=plan["filters"], fx_reference=bool(plan.get("fx_reference")))
