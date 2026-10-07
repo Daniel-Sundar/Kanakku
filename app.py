@@ -23,7 +23,7 @@ from profiler import profile_all
 
 ROOT = Path(__file__).resolve().parent
 VERSION = "1.0.0"
-REPO_URL = "https://github.com/Daniel-Sundar/Kanakku"
+REPO_URL = "https://github.com/Daniel-Sundar/ProofPilot"
 SUPPORT_URL = REPO_URL + "/issues"
 DEMOS = {
     "nimbus_retail": ("Nimbus Retail", "300 orders across 4 tables: orders, two customer lists, exchange rates. "
