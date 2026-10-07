@@ -1,5 +1,5 @@
 # ProofPilot: numbers you can check, not just trust
-> HackNex 2026 · HNX26PSI08 Proof-Carrying Data Analyst · Team: Daniel S (lead, engine), Ajay (UI), Aaron (trap detectors, evaluation), C (data, testing, deck)
+> HackNex 2026 · HNX26PSI08 Proof-Carrying Data Analyst · Team: Daniel, Ajay, Aaron, Gladys
 
 ProofPilot is the friend every team needs: the one who actually checks the bill before splitting it.
 
@@ -77,7 +77,7 @@ Dataset `data/example` (orders, customers_billing, customers_crm, fx_rates).
 - **AI coding tools used to build it:** Claude Code, Google AntiGravity, ChatGPT/Codex. The team reviewed and can explain all code.
 
 ## Team
-- Daniel S: lead, engine (planner, proof template, executor, verifier, LLM client)
+- Daniel: lead, engine (planner, proof template, executor, verifier, LLM client)
 - Ajay: Streamlit UI (`app.py`), demo laptop
 - Aaron: Trap Radar detectors (`profiler_checks.py`), evaluation (`eval.py`)
-- C: datasets, gold answers, testing, deck
+- Gladys: datasets, gold answers, testing, deck
