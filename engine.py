@@ -66,7 +66,7 @@ else:
             return done(status="abstained", answer="I can't determine this reliably.",
                         reason=f"There is no column for {miss[0]} in any table "
                                f"(looked for: {', '.join(miss[1])}).",
-                        needed=f"A column with {miss[0]} (or {miss[1][0]}) per row.")
+                        needed=f"A column with {' or '.join(dict.fromkeys(miss[1]))} for each row.")
         if not s["value_col"] or not s["date_col"]:
             return done(status="error", reason="Couldn't find a date column and a numeric amount column.")
 
