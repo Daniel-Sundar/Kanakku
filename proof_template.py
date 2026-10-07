@@ -11,6 +11,7 @@ TEMPLATE = r'''"""Kanakku proof: {question}
 Re-run it yourself:  python {proof_path}
 """
 from pathlib import Path
+import hashlib
 import json
 import re
 import pandas as pd
@@ -29,7 +30,11 @@ KEY_COL = {key_col!r}           # join key to the dimension tables
 FILTERS = {filters!r}           # e.g. {{"region": "North"}} looked up in the other tables
 # ----------------------------------------------------------------------------
 
+# Fingerprint of the exact data this proof read: if anyone edits a CSV, the fingerprint changes.
+FINGERPRINT = hashlib.sha256(b"".join(p.read_bytes() for p in sorted(DATA.glob("*.csv")))).hexdigest()[:16]
+
 def finish(**kw):
+    kw["data_fingerprint"] = FINGERPRINT
     print("RESULT=" + json.dumps(kw))
     raise SystemExit(0)
 

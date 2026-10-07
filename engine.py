@@ -90,6 +90,7 @@ else:
         verifier.remember(proof_path, res)
         again = verifier.rerun(proof_path)      # fresh process, must give the same answer
 
+        fp = res.get("data_fingerprint")
         if "abstain" in res:
             return done(status="abstained", answer="I can't determine this reliably.", reason=res["abstain"],
                         needed=res["needed"], code=code, proof_path=proof_path,
@@ -114,7 +115,8 @@ else:
             scope.append(f"other currencies converted to {plan['currency']} with that month's rate")
         scope += [f"{k} = {v}" for k, v in plan["filters"].items()]
         return done(answer=answer, value=value, unit=unit,
-                    assumptions=(["Scope: " + ", ".join(scope)] if scope else []) + res.get("assumptions", []),
+                    assumptions=(["Scope: " + ", ".join(scope)] if scope else []) + res.get("assumptions", [])
+                    + ([f"Data fingerprint {fp}: re-runs check it, so any edit to the CSVs is caught"] if fp else []),
                     code=code, proof_path=proof_path, rerun_match=True, llm_mode=mode)
 
     def rerun_proof(proof_path: str) -> dict:

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-ALLOWED_IMPORTS = {"pandas", "numpy", "json", "math", "datetime", "pathlib", "re"}
+ALLOWED_IMPORTS = {"pandas", "numpy", "json", "math", "datetime", "pathlib", "re", "hashlib"}
 BANNED_CALLS = {"exec", "eval", "compile", "__import__", "open", "input", "globals", "locals"}
 
 

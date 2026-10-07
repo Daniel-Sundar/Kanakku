@@ -8,6 +8,7 @@ import executor
 
 ROOT = Path(__file__).resolve().parent
 EXPECTED = ROOT / "proofs" / "expected.json"
+FINGERPRINTS = ROOT / "proofs" / "fingerprints.json"
 WHY = re.compile(r"^\s*why\b|\bwhy (did|do|does|is|are|was|were)\b|\breason\b|\bcaused?\b", re.I)
 
 
@@ -37,6 +38,10 @@ def remember(proof_path: str, result: dict):
     data = json.loads(EXPECTED.read_text()) if EXPECTED.exists() else {}
     data[proof_path] = result.get("value") if "value" in result else {"abstain": result.get("abstain")}
     EXPECTED.write_text(json.dumps(data, indent=2) + "\n")
+    if result.get("data_fingerprint"):
+        fps = json.loads(FINGERPRINTS.read_text()) if FINGERPRINTS.exists() else {}
+        fps[proof_path] = result["data_fingerprint"]
+        FINGERPRINTS.write_text(json.dumps(fps, indent=2) + "\n")
 
 
 def rerun(proof_path: str) -> dict:
@@ -51,4 +56,7 @@ def rerun(proof_path: str) -> dict:
         value = {k: x["value"] for k, x in value.items()}   # older two-reading format
     if isinstance(got, dict) and "value" not in got and "abstain" not in got:
         value = {k: x["value"] for k, x in got.items() if isinstance(x, dict) and "value" in x}
+    fps = json.loads(FINGERPRINTS.read_text()) if FINGERPRINTS.exists() else {}
+    if proof_path in fps and got.get("data_fingerprint") != fps[proof_path]:
+        return {"value": value, "match": False, "error": "the data files changed since this proof was made"}
     return {"value": value, "match": expected is not None and same(value, expected)}
