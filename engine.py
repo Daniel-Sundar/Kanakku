@@ -67,6 +67,12 @@ else:
                         reason=f"There is no column for {miss[0]} in any table "
                                f"(looked for: {', '.join(miss[1])}).",
                         needed=f"A column with {' or '.join(dict.fromkeys(miss[1]))} for each row.")
+        # Gate 3: a name the question depends on that is nowhere in the data (a trick or a typo).
+        unknown = planner.unknown_names(question, tables, s)
+        if unknown:
+            return done(status="abstained", answer="I can't determine this reliably.",
+                        reason=f"{', '.join(unknown)} doesn't appear anywhere in the data, so any number would be a guess.",
+                        needed="Check the spelling, or use a name that is in the data.")
         if not s["value_col"] or not s["date_col"]:
             return done(status="error", reason="Couldn't find a date column and a numeric amount column.")
 

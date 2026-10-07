@@ -122,6 +122,29 @@ def missing_concept(question: str, s: dict):
     return None
 
 
+KNOWN = {"total", "revenue", "sales", "orders", "order", "sum", "average", "mean", "count", "how", "what",
+         "which", "the", "in", "for", "of", "and", "number", "amount", "customer", "customers", "region",
+         "month", "year", "all", "i", "is", "was", "were", "show", "give", "me", "average", "q1", "q2", "q3", "q4"}
+
+
+def unknown_names(question: str, tables: dict, s: dict) -> list:
+    """Names in the question (capitalised words, IDs like C99) that appear nowhere in the data."""
+    words = re.findall(r"[A-Za-z][A-Za-z0-9_]*", question)
+    cands = [w for i, w in enumerate(words) if (i > 0 and w[0].isupper()) or re.fullmatch(r"[A-Za-z]+\d+", w)]
+    if not cands:
+        return []
+    seen = set()
+    for t in tables.values():
+        for c in t.columns:
+            seen.update(re.findall(r"[a-z0-9]+", str(c).lower()))
+            if not pd.api.types.is_numeric_dtype(t[c]):
+                for v in t[c].dropna().astype(str).unique():
+                    seen.update(re.findall(r"[a-z0-9]+", v.lower()))
+    skip = KNOWN | {m for m in MONTHS} | {m[:3] for m in MONTHS} | {c.lower() for c in s["currencies"] or []} \
+        | {"usd", "eur", "inr", "gbp"}
+    return [w for w in dict.fromkeys(cands) if w.lower() not in skip and w.lower() not in seen]
+
+
 def make_proof(question: str, plan: dict, s: dict, data_rel: str, proof_path: str) -> str:
     return TEMPLATE.format(
         question=question.replace('"""', "'''"), proof_path=proof_path,

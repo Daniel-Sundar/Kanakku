@@ -93,6 +93,11 @@ def compute(reading):
         d["_month"] = d[DATE_COL].apply(lambda v: to_month(v, reading))
     if MONTHS:
         d = d[d["_month"].isin(MONTHS)]
+        if len(d) == 0:     # a period the data doesn't cover is unknown, not zero
+            have = sorted(m for m in df[DATE_COL].apply(lambda v: to_month(v, reading)).dropna().unique())
+            return {{"abstain": f"there are no rows for {{MONTHS[0]}}" + (f" to {{MONTHS[-1]}}" if len(MONTHS) > 1 else "")
+                               + (f"; the data covers {{have[0]}} to {{have[-1]}}" if have else ""),
+                    "needed": "data for that period, or ask about a period inside the data"}}
     # Trap 3: the same customer described differently in two tables.
     for col, want in FILTERS.items():
         sources = [(n, t) for n, t in tables.items() if n != FACT and col in t.columns and KEY_COL in t.columns]
