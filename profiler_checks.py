@@ -35,8 +35,11 @@ def detect_duplicates(df: pd.DataFrame, table: str) -> list[dict]:
       message like "orders: 1 exact duplicate row(s)".
     Hint: df.duplicated()
     """
-    # TODO (B3)
-    return []
+    d = df.duplicated()
+    if not d.any():
+        return []
+    return [make_flag(table, "*", "duplicate_rows", "high", d.sum(), df.index[d],
+                      f"{table}: {d.sum()} exact duplicate row(s)")]
 
 
 def detect_missing(df: pd.DataFrame, table: str) -> list[dict]:
@@ -49,8 +52,13 @@ def detect_missing(df: pd.DataFrame, table: str) -> list[dict]:
       message like "orders.amount: 1 missing value(s)".
     Hint: df[col].isna()
     """
-    # TODO (B3)
-    return []
+    out = []
+    for col in df.columns:
+        m = df[col].isna()
+        if m.any():
+            out.append(make_flag(table, col, "missing_values", "high", m.sum(), df.index[m],
+                                 f"{table}.{col}: {m.sum()} missing value(s)"))
+    return out
 
 
 def detect_mixed_currency(df: pd.DataFrame, table: str) -> list[dict]:
@@ -64,8 +72,16 @@ def detect_mixed_currency(df: pd.DataFrame, table: str) -> list[dict]:
       message must name the currencies, like "orders.currency: 2 currencies (EUR, USD)".
     Hint: df[col].value_counts()
     """
-    # TODO (B3)
-    return []
+    out = []
+    for col in df.columns:
+        if "currency" not in col.lower():
+            continue
+        vc = df[col].value_counts()
+        if len(vc) >= 2:
+            rows = df.index[df[col].notna() & (df[col] != vc.index[0])]
+            out.append(make_flag(table, col, "mixed_currency", "high", len(vc), rows,
+                                 f"{table}.{col}: {len(vc)} currencies ({', '.join(sorted(vc.index))})"))
+    return out
 
 
 AMBIGUOUS = re.compile(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$")
@@ -84,5 +100,16 @@ def detect_ambiguous_dates(df: pd.DataFrame, table: str) -> list[dict]:
       message like "orders.order_date: 1 ambiguous date(s), e.g. 03/02/2024".
     Hint: AMBIGUOUS.match(str(value))
     """
-    # TODO (B3)
-    return []
+    out = []
+    for col in df.columns:
+        if "date" not in col.lower():
+            continue
+        rows = []
+        for i, v in df[col].items():
+            m = AMBIGUOUS.match(str(v))
+            if m and int(m[1]) <= 12 and int(m[2]) <= 12 and m[1] != m[2]:
+                rows.append(i)
+        if rows:
+            out.append(make_flag(table, col, "ambiguous_date", "high", len(rows), rows,
+                                 f"{table}.{col}: {len(rows)} ambiguous date(s), e.g. {df[col][rows[0]]}"))
+    return out
