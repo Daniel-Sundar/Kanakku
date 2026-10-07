@@ -59,7 +59,11 @@ def rule_plan(question: str, s: dict) -> dict:
         plan["agg"] = "mean"
     year = (re.search(r"\b(20\d\d)\b", q) or [None, None])[1]
     qm = re.search(r"\bq([1-4])\b", q)
-    if qm and year:
+    hm = re.search(r"\bh([12])\b", q)
+    if hm and year:
+        start = (int(hm.group(1)) - 1) * 6
+        plan["months"] = [f"{year}-{m:02d}" for m in range(start + 1, start + 7)]
+    elif qm and year:
         start = (int(qm.group(1)) - 1) * 3
         plan["months"] = [f"{year}-{m:02d}" for m in range(start + 1, start + 4)]
     else:
@@ -70,7 +74,7 @@ def rule_plan(question: str, s: dict) -> dict:
             plan["months"] = [f"{year}-{m:02d}" for m in range(1, 13)]
     for cur in s["currencies"] or ["USD", "EUR", "INR"]:
         c = cur.lower()
-        if re.search(rf"\b{c}\s+(orders|sales|transactions|payments)\b|\b(orders|sales)\s+(in|paid in)\s+{c}\b", q):
+        if re.search(rf"\b{c}\s+(orders?|sales?|transactions?|payments?)\b|\b(orders|sales)\s+(in|paid in)\s+{c}\b", q):
             plan.update(currency_mode="filter", currency=cur)
             break
         if re.search(rf"\b{c}\b", q):
@@ -124,7 +128,7 @@ def missing_concept(question: str, s: dict):
 
 KNOWN = {"total", "revenue", "sales", "orders", "order", "sum", "average", "mean", "count", "how", "what",
          "which", "the", "in", "for", "of", "and", "number", "amount", "customer", "customers", "region",
-         "month", "year", "all", "i", "is", "was", "were", "show", "give", "me", "average", "q1", "q2", "q3", "q4"}
+         "month", "year", "all", "i", "is", "was", "were", "show", "give", "me", "average", "q1", "q2", "q3", "q4", "h1", "h2"}
 
 
 def unknown_names(question: str, tables: dict, s: dict) -> list:
