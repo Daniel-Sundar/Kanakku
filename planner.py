@@ -9,7 +9,7 @@ import re
 import pandas as pd
 
 import llm_client
-from proof_template import LOOKUP_TEMPLATE, TEMPLATE
+from proof_template import INFO_TEMPLATE, LOOKUP_TEMPLATE, TEMPLATE
 
 MONTHS = ["january", "february", "march", "april", "may", "june", "july",
           "august", "september", "october", "november", "december"]
@@ -319,3 +319,21 @@ def make_proof(question: str, plan: dict, s: dict, data_rel: str, proof_path: st
         agg=plan["agg"], months=plan["months"], days=plan.get("days") or [], currency_col=s["currency_col"],
         currency_mode=plan["currency_mode"] if s["currency_col"] else "none", currency=plan["currency"],
         key_col=s["key_col"], filters=plan["filters"], fx_reference=bool(plan.get("fx_reference")))
+
+
+# ---------- questions about the data itself, follow-ups, and unclear questions -------------
+INFO = re.compile(r"\b(which|what)\s+(period|dates?|months?|time|range|years?)\b.*\b(data|available|cover|covers|covered)\b"
+                  r"|\b(date range|time period|period of the data|data (is )?available|data cover|how far back"
+                  r"|from (which|what) date|start and end dates?|first and last dates?)\b", re.I)
+FOLLOWUP = re.compile(r"\b(this|that|these|those|the above|previous|same|it)\s+(amt|amount|number|value|total|revenue|"
+                      r"answer|result|figure|one|sum)\b|\b(change|convert|repeat|redo)\s+(this|that|it)\b"
+                      r"|^\s*(and|what about|how about|then)\b", re.I)
+MEASURE = re.compile(r"\b(total|revenue|sales?|sum|amount|amt|value|spent|spend|earn\w*|made|income|turnover|business|"
+                     r"bill\w*|paid|collect\w*|worth|money|how much|how many|count|number of|average|mean|avg|export\w*|"
+                     r"invoice\w*|orders?|transactions?|quantity|qty|units)\b", re.I)
+
+
+def make_info_proof(question: str, s: dict, data_rel: str, proof_path: str) -> str:
+    return INFO_TEMPLATE.format(question=question.replace('"""', "'''"), proof_path=proof_path,
+                                data_rel=" / ".join(repr(p) for p in data_rel.split("/")),
+                                fact=s["fact"], date_col=s["date_col"])

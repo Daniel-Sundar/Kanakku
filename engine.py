@@ -7,6 +7,7 @@ run_question: refusal gates -> JSON plan (AI, else rules) -> proof script -> saf
               -> run in a fresh process -> re-run again -> answer text copied from RESULT
 """
 import os
+import re
 import time
 from pathlib import Path
 
@@ -77,10 +78,26 @@ else:
             return done(status="abstained", answer="I can't determine this reliably.",
                         reason=f"{', '.join(unknown)} doesn't appear anywhere in the data, so any number would be a guess.",
                         needed="Check the spelling, or use a name that is in the data.")
+        # Questions about a previous answer: each question is proven on its own, so ask for it in full.
+        if planner.FOLLOWUP.search(question) and not planner.INFO.search(question) and not re.search(r"\b20\d\d\b", question):
+            return done(status="abstained", answer="Please ask that as a full question.",
+                        reason="This refers to an earlier answer. ProofPilot proves every question on its own, so it "
+                               "needs the period, currency and filter written out again.",
+                        needed="Repeat the full question, e.g. 'Total sales in January 2026 in INR'. The scope of any "
+                               "answer is under 'How it was worked out'.")
+        # "Which period does the data cover?": dates and row counts, still from a proof script.
+        if planner.INFO.search(question) and s["date_col"]:
+            return _run_info(question, s, tables, done)
         # Listing or counting things (buyers, customers, stalls) rather than adding up money.
         lp = planner.lookup_plan(question, tables, s)
         if lp:
             return _run_lookup(question, lp, tables, done)
+        if not planner.MEASURE.search(question) and not planner.rule_plan(question, s)["filters"]:
+            # Never fall back to "the grand total" for a question we didn't understand.
+            return done(status="abstained", answer="I'm not sure which number you want.",
+                        reason="The question doesn't name a total, count, average or list, so any number would be a guess.",
+                        needed="Ask for one number, e.g. 'Total sales in March 2026', 'How many orders in May?' or "
+                               "'Which period does the data cover?'")
         if not s["value_col"] or not s["date_col"]:
             return done(status="error", reason=f"The loaded table(s) ({', '.join(tables)}) have no date column with "
                         "an amount column next to it, so there is nothing to add up.",
@@ -180,6 +197,25 @@ else:
         return done(answer=answer, value=v, unit=res["unit"], code=code, proof_path=proof_path, rerun_match=True,
                     assumptions=["Scope: " + ", ".join(res.get("assumptions", []))]
                     + ([f"Data fingerprint {fp}: re-runs check it, so any edit to the CSVs is caught"] if fp else []))
+
+    def _run_info(question, s, tables, done):
+        proof_path = _next_proof()
+        code = planner.make_info_proof(question, s, _data_dir(tables), proof_path)
+        problems = executor.check_code(code)
+        if problems:
+            return done(status="error", reason="Proof failed the safety check: " + "; ".join(problems), code=code)
+        (ROOT / proof_path).write_text(code)
+        first = executor.run_file(ROOT / proof_path)
+        if not first["ok"]:
+            return done(status="error", reason=f"The proof crashed: {first['error']}", code=code, proof_path=proof_path)
+        res = first["result"]
+        verifier.remember(proof_path, res)
+        again = verifier.rerun(proof_path)
+        v = res["value"]
+        answer = (f"{v['from']} to {v['to']}" if v["from"] else "No dates found") + f" ({v['rows']:,} rows in {s['fact']})"
+        return done(answer=answer, value=v, unit="info", code=code, proof_path=proof_path, rerun_match=again["match"],
+                    assumptions=["Scope: the earliest and latest date in " + s["fact"] + " (duplicates counted once; "
+                                 "a date like 03/02 counts both ways)"] + res.get("assumptions", []))
 
     def rerun_proof(proof_path: str) -> dict:
         out = verifier.rerun(proof_path)

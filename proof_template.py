@@ -261,3 +261,37 @@ rows = lists[0] if lists else []
 assumptions = [f"from {{', '.join(TABLES)}}"] + [f"{{c}} = {{v}}" for c, v in FILTERS.items()]
 finish(value=len(rows) if COUNT else rows, unit="items" if COUNT else "list", rows_used=rows, assumptions=assumptions)
 '''
+
+
+INFO_TEMPLATE = r'''"""ProofPilot proof (what the data covers): {question}
+Re-run it yourself:  python {proof_path}
+"""
+from pathlib import Path
+import hashlib
+import json
+import re
+import pandas as pd
+
+DATA = Path(__file__).resolve().parents[1] / {data_rel}
+FACT = {fact!r}
+DATE_COL = {date_col!r}
+
+FINGERPRINT = hashlib.sha256(b"".join(p.read_bytes() for p in sorted(DATA.glob("*.csv")))).hexdigest()[:16]
+tables = {{p.stem: pd.read_csv(p, dtype=str, skipinitialspace=True) for p in sorted(DATA.glob("*.csv"))}}
+df = tables[FACT].drop_duplicates()
+days = []
+for v in (df[DATE_COL].dropna() if DATE_COL else []):
+    s = str(v).strip()
+    if re.match(r"^\d{{4}}-\d{{2}}-\d{{2}}", s):
+        days.append(s[:10])
+    else:
+        m = re.match(r"^(\d{{1,2}})[/-](\d{{1,2}})[/-](\d{{4}})$", s)
+        if m:   # either reading: keep the earliest and latest possible day
+            a, b, y = int(m.group(1)), int(m.group(2)), m.group(3)
+            for d, mo in ((a, b), (b, a)):
+                if 1 <= mo <= 12 and 1 <= d <= 31:
+                    days.append(f"{{y}}-{{mo:02d}}-{{d:02d}}")
+value = {{"from": min(days) if days else None, "to": max(days) if days else None, "rows": int(len(df))}}
+print("RESULT=" + json.dumps({{"value": value, "unit": "info", "rows_used": [], "data_fingerprint": FINGERPRINT,
+                              "assumptions": [f"{{n}}: {{len(t)}} rows" for n, t in tables.items()]}}))
+'''
