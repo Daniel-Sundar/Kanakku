@@ -100,7 +100,16 @@ pre, code { white-space: pre-wrap !important; overflow-wrap: anywhere; }
   color: var(--primary) !important; text-decoration: none !important; }
 .pp-side-name { font-size: 1.3rem; font-weight: 700; color: var(--primary); }
 .st-key-theme_toggle { position: fixed; bottom: 16px; right: 16px; z-index: 999990; width: auto !important; }
-.st-key-theme_toggle button { background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+.st-key-theme_toggle button { border-radius: 999px !important; padding: 6px 6px 6px 18px !important; min-height: 48px;
+  background: #eef1f0 !important; color: #3a4440 !important; border: 1px solid #dfe5e2 !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,.12), inset 0 1px 0 #fff; font-weight: 700; letter-spacing: .06em; }
+.st-key-theme_toggle button > div > span { display: flex !important; flex-direction: row-reverse !important;
+  align-items: center; gap: 12px; }
+.st-key-theme_toggle button p { font-size: .85rem !important; text-transform: uppercase; line-height: 1.05; margin: 0;
+  max-width: 3.4em; text-align: center; white-space: normal; }
+.st-key-theme_toggle button [data-testid="stIconMaterial"] { width: 38px !important; height: 38px !important; border-radius: 50%; font-size: 24px !important; flex: none;
+  display: flex; align-items: center; justify-content: center; background: #fff; color: #3a4440;
+  box-shadow: 0 1px 4px rgba(0,0,0,.2); }
 @media (max-width: 640px) {
   .block-container { padding-left: 12px; padding-right: 12px; padding-top: 16px; }
   .pp-hero { padding: 32px 8px 24px; }
@@ -127,7 +136,11 @@ if ss["theme"] == "dark":
 [data-testid="stFileUploaderDropzone"] { background: #1b2320 !important; border-color: #34413c !important; }
 .stApp input, .stApp textarea, [data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="textarea"],
 [data-baseweb="select"] > div, [data-testid="stChatInput"] > div { background: #232d29 !important; color: #e6ece9 !important; border-color: #34413c !important; }
-.stButton button[kind="secondary"], .stDownloadButton button, .st-key-theme_toggle button { background: #232d29 !important; color: #e6ece9 !important; border-color: #34413c !important; }
+.stButton button[kind="secondary"], .stDownloadButton button { background: #232d29 !important; color: #e6ece9 !important; border-color: #34413c !important; }
+.st-key-theme_toggle button { background: #2b3230 !important; color: #f2f5f4 !important; border-color: #3d4643 !important;
+  padding: 6px 18px 6px 6px !important; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+.st-key-theme_toggle button > div > span { flex-direction: row !important; }
+.st-key-theme_toggle button [data-testid="stIconMaterial"] { background: #3d4643 !important; color: #f2f5f4 !important; }
 .stApp pre, .stApp code, [data-testid="stCode"] > div { background: #1b2320 !important; color: #e6ece9 !important; }
 [data-testid="stSidebarNavLink"][aria-current="page"], [data-testid="stSidebarNavLink"]:hover { background: #232d29 !important; }
 .stTabs [data-baseweb="tab-list"] { border-color: #34413c; }
@@ -581,8 +594,8 @@ with st.sidebar:
                 unsafe_allow_html=True)
 with st.container(key="theme_toggle"):
     dark = ss["theme"] == "dark"
-    if st.button("Light mode" if dark else "Dark mode", icon=":material/light_mode:" if dark else ":material/dark_mode:",
-                 help="Switch between light and dark mode"):
+    if st.button("Dark mode" if dark else "Light mode", icon=":material/dark_mode:" if dark else ":material/light_mode:",
+                 help="Switch to light mode" if dark else "Switch to dark mode"):
         ss["theme"] = "light" if dark else "dark"
         st.rerun()
 st.navigation(list(PAGES.values()), position="sidebar").run()
