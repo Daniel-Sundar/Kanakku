@@ -168,7 +168,8 @@ def compute(reading):
         value = round(float(d[VALUE_COL].mean()), 2)
     else:
         value = round(float(d[VALUE_COL].sum()), 2)
-    return {{"value": value, "rows": [label(i) for i in d.index]}}
+    one = sorted(d[CURRENCY_COL].dropna().str.upper().unique()) if CURRENCY_COL and VALUE_COL else []
+    return {{"value": value, "rows": [label(i) for i in d.index], "cur": one[0] if len(one) == 1 else None}}
 
 def _touches_scope(i):
     dd, mm = to_month(df.loc[i, DATE_COL], "DD/MM"), to_month(df.loc[i, DATE_COL], "MM/DD")
@@ -189,6 +190,7 @@ if len(set(values.values())) == 1:
     first = results[readings[0]]
     if in_play:
         assumptions.append(f"date of {{', '.join(label(i) for i in in_play)}} is ambiguous but both readings give the same answer")
+    unit = unit or (first.get("cur") or "")
     finish(value=first["value"], unit=unit, rows_used=first["rows"], assumptions=assumptions)
 assumptions.append(f"date of {{', '.join(label(i) for i in in_play)}} is ambiguous, so both readings are shown")
 finish(value={{f"if_{{r}}": v for r, v in values.items()}}, unit=unit,
@@ -209,6 +211,7 @@ TABLES = {tables!r}          # where the list comes from
 KEY = {key!r}
 FILTERS = {filters!r}
 COUNT = {count!r}            # True: answer is how many; False: the list itself
+DETAIL = {detail!r}          # True: one record was named, so show all its columns
 
 FINGERPRINT = hashlib.sha256(b"".join(p.read_bytes() for p in sorted(DATA.glob("*.csv")))).hexdigest()[:16]
 
@@ -224,7 +227,10 @@ for name in TABLES:
     for col, want in FILTERS.items():
         t = t[t[col].map(squash) == squash(want)]
     label_col = next((c for c in t.columns if "name" in c.lower()), None)
-    answers[name] = sorted(f"{{r[KEY]}} {{r[label_col]}}".strip() if label_col else str(r[KEY]) for _, r in t.iterrows())
+    extra = [c for c in t.columns if c not in (KEY, label_col)] if DETAIL else []
+    answers[name] = sorted((f"{{r[KEY]}} {{r[label_col]}}".strip() if label_col else str(r[KEY]))
+                           + (" (" + ", ".join(f"{{c}}: {{r[c]}}" for c in extra) + ")" if extra else "")
+                           for _, r in t.iterrows())
 # Trap: two tables listing the same things differently
 lists = list(answers.values())
 if any(set(x) != set(lists[0]) for x in lists[1:]):

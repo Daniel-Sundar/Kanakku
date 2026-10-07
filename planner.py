@@ -46,7 +46,18 @@ def schema(tables: dict) -> dict:
                     dims.setdefault(c, set()).update(str(v) for v in t[c].dropna())
     all_cols = {c.lower() for t in tables.values() for c in t.columns}
     keys = sorted(df[key_col].dropna().astype(str).unique()) if key_col else []
-    return {"fact": best, "date_col": date_col, "value_col": value_col, "currency_col": currency_col,
+    present = set()
+    for v in (df[date_col].dropna().astype(str) if date_col else []):
+        v = v.strip()
+        if re.match(r"^\d{4}-\d{2}", v):
+            present.add(v[:7])
+        elif re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{4}$", v):
+            a, b, y = re.split(r"[/-]", v)
+            present.update(f"{y}-{int(m):02d}" for m in (a, b) if 1 <= int(m) <= 12)
+    nums = [c for c in df.columns if c not in (date_col, key_col) and not c.lower().endswith(("id", "_no"))
+            and pd.to_numeric(df[c], errors="coerce").notna().mean() > 0.8]
+    return {"months_present": sorted(present), "num_cols": nums,
+            "fact": best, "date_col": date_col, "value_col": value_col, "currency_col": currency_col,
             "key_col": key_col, "keys": keys, "currencies": currencies, "dims": dims, "all_cols": all_cols}
 
 
@@ -65,6 +76,21 @@ def rule_plan(question: str, s: dict) -> dict:
     days = [f"{y}-{int(m):02d}-{int(d):02d}" for y, m, d in re.findall(r"\b(20\d\d)[-/.](\d{1,2})[-/.](\d{1,2})\b", q)
             if 1 <= int(m) <= 12 and 1 <= int(d) <= 31]
     found = [i + 1 for i, m in enumerate(MONTHS) if re.search(rf"\b{m}\b|\b{m[:3]}\b", q)]
+    for n in re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+month\b|\bmonth\s+(?:no\.?\s*)?(\d{1,2})\b", q):
+        n = int(n[0] or n[1])
+        if 1 <= n <= 12 and n not in found:
+            found.append(n)
+    my = re.search(r"\b(\d{1,2})[/-](20\d\d)\b", q)
+    if my and 1 <= int(my.group(1)) <= 12 and not days:
+        year, found = my.group(2), found + [int(my.group(1))]
+    present = s.get("months_present", [])
+    if not year and (found or qm or hm) and present:
+        # no year given: use the one year the data has for that month (said in the scope line)
+        want = found or ([(int(qm.group(1)) - 1) * 3 + 1] if qm else [(int(hm.group(1)) - 1) * 6 + 1])
+        cands = sorted({m[:4] for m in present if int(m[5:]) in want})
+        if cands:
+            year = cands[-1]
+            plan["assumed_year"] = year if len(cands) == 1 else f"{year} (latest year in the data with that month)"
     if days:
         lo, hi = min(days), max(days)
         plan["days"] = [lo, hi]
@@ -90,8 +116,14 @@ def rule_plan(question: str, s: dict) -> dict:
         if re.search(rf"\b{c}\s+(orders?|sales?|transactions?|payments?|invoices?|bills?|receipts?)\b|\b(orders|sales|invoices|bills)\s+(in|paid in|billed in)\s+{c}\b", q):
             plan.update(currency_mode="filter", currency=cur)
             break
-        if re.search(rf"\b{c}\b", q):
-            plan.update(currency_mode="convert", currency=cur)
+        if re.search(rf"\b{c}\b", q) and (plan["currency_mode"] != "convert"
+                                            or re.search(rf"\b(in|into)\s+{c}\b", q)):
+            plan.update(currency_mode="convert", currency=cur)   # "convert USD into INR": INR is the target
+    syn = {"qty": ("qty", "quantity", "units", "pieces"), "quantity": ("qty", "quantity", "units")}
+    for c in s.get("num_cols", []):
+        words = syn.get(c.lower(), (c.lower(), c.lower().replace("_", " ")))
+        if c != s["value_col"] and any(re.search(rf"\b{re.escape(w)}\b", q) for w in words):
+            plan["value_col"] = c
     for col, values in s["dims"].items():
         for v in values:
             if mentions(q, v):
@@ -152,8 +184,24 @@ def lookup_plan(question: str, tables: dict, s: dict):
     stems.add(key.lower().replace("_id", ""))
     entity_named = any(re.search(rf"\b{re.escape(st)}s?\b", q) for st in stems)
     counting = bool(re.search(r"\bhow many\b|\bnumber of\b|\bcount\b", q))
-    if not entity_named or NUMBER_WORDS.search(q) or not (LIST_WORDS.search(q) or counting):
+    # one record named by id or name: "who is customer C5", "which state is Aroma Traders in"
+    record = {}
+    for n in dim_tables:
+        t = tables[n]
+        for v in t[key].dropna().astype(str).unique():
+            if re.search(rf"\b{re.escape(v.lower())}\b", q):
+                record[key] = v
+        for c in [c for c in t.columns if "name" in c.lower()]:
+            for v in t[c].dropna().astype(str).unique():
+                if mentions(q, v):
+                    record[c] = v
+    asks_detail = bool(record) and bool(LIST_WORDS.search(q) or re.search(r"^\s*(what|where|details?|info)\b", q))
+    if NUMBER_WORDS.search(q) or not (asks_detail or (entity_named and (LIST_WORDS.search(q) or counting))):
         return None
+    if asks_detail and not counting:
+        use = [n for n in dim_tables if all(c in tables[n].columns for c in record)]
+        return {"kind": "lookup", "tables": use, "key": key, "filters": record, "count": False, "detail": True,
+                "entity": "match" if len(record) else key}
     if counting and re.search(r"\b(orders?|sales?|invoices?|transactions?|bills?)\b", q):
         return None                  # "how many orders" counts fact rows, handled by the normal plan
     filters = {}
@@ -173,7 +221,8 @@ def make_lookup_proof(question: str, plan: dict, data_rel: str, proof_path: str)
     return LOOKUP_TEMPLATE.format(
         question=question.replace('"""', "'''"), proof_path=proof_path,
         data_rel=" / ".join(repr(p) for p in data_rel.split("/")),
-        tables=plan["tables"], key=plan["key"], filters=plan["filters"], count=plan["count"])
+        tables=plan["tables"], key=plan["key"], filters=plan["filters"], count=plan["count"],
+        detail=plan.get("detail", False))
 
 
 # ---------- plan from the AI ------------------------------------------------
@@ -205,8 +254,13 @@ def llm_plan(question: str, s: dict, tables: dict):
             plan["currency_mode"] = "none"
         exact = rule_plan(question, s)      # exact day ranges are parsed by rule, never guessed
         plan["days"] = exact["days"]
-        if exact["days"]:
+        if exact["days"] or (exact["months"] and not plan["months"]):
             plan["months"] = exact["months"]
+        for k in ("value_col", "assumed_year"):
+            if k in exact:
+                plan[k] = exact[k]
+        for k, v in exact["filters"].items():
+            plan["filters"].setdefault(k, v)
         return plan, mode
     except (AttributeError, json.JSONDecodeError, TypeError):
         return None, f"{mode}: unreadable plan"
@@ -221,14 +275,25 @@ def missing_concept(question: str, s: dict):
 
 
 KNOWN = {"total", "revenue", "sales", "orders", "order", "sum", "average", "mean", "count", "how", "what",
-         "which", "the", "in", "for", "of", "and", "number", "amount", "customer", "customers", "region",
+         "which", "the", "in", "for", "of", "and", "who", "where", "month", "tell", "list", "number", "amount", "customer", "customers", "region",
          "month", "year", "all", "i", "is", "was", "were", "show", "give", "me", "average", "q1", "q2", "q3", "q4", "h1", "h2"}
+
+
+COMMON = set("""convert converted provide give get find calculate compute please also then final overall
+total revenue sales show tell list what which who where when how many much all every other others currency currencies
+into to from by with and or the a an of in on for is are was were be i we my our me you your it this that these those
+amount value sum average mean count number data table orders order invoices invoice bills bill buyers buyer
+customers customer dealers dealer stalls stall region state city block month year day date seen have has had
+answer result report""".split())
 
 
 def unknown_names(question: str, tables: dict, s: dict) -> list:
     """Names in the question (capitalised words, IDs like C99) that appear nowhere in the data."""
-    words = re.findall(r"[A-Za-z][A-Za-z0-9_]*", question)
-    cands = [w for i, w in enumerate(words) if (i > 0 and w[0].isupper()) or re.fullmatch(r"[A-Za-z]+\d+", w)]
+    cands = []
+    for sentence in re.split(r"[.!?;:\n]+", question):     # the first word of each sentence is capitalised anyway
+        words = re.findall(r"[A-Za-z][A-Za-z0-9_]*", sentence)
+        cands += [w for i, w in enumerate(words) if (i > 0 and w[0].isupper() and not w.isupper() and w.lower() not in COMMON)
+                  or re.fullmatch(r"[A-Za-z]+\d+", w)]
     if not cands:
         return []
     seen = set()
@@ -247,7 +312,7 @@ def make_proof(question: str, plan: dict, s: dict, data_rel: str, proof_path: st
     return TEMPLATE.format(
         question=question.replace('"""', "'''"), proof_path=proof_path,
         data_rel=" / ".join(repr(p) for p in data_rel.split("/")),
-        fact=s["fact"], date_col=s["date_col"], value_col=None if plan["agg"] == "count" else s["value_col"],
+        fact=s["fact"], date_col=s["date_col"], value_col=None if plan["agg"] == "count" else plan.get("value_col") or s["value_col"],
         agg=plan["agg"], months=plan["months"], days=plan.get("days") or [], currency_col=s["currency_col"],
         currency_mode=plan["currency_mode"] if s["currency_col"] else "none", currency=plan["currency"],
         key_col=s["key_col"], filters=plan["filters"])

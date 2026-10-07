@@ -132,6 +132,10 @@ else:
         elif plan["currency_mode"] == "convert":
             scope.append(f"other currencies converted to {plan['currency']} with that month's rate")
         scope += [f"{k} = {v}" for k, v in plan["filters"].items()]
+        if plan.get("value_col"):
+            scope.append(f"adds up {plan['value_col']}")
+        if plan.get("assumed_year"):
+            scope.append(f"no year was given, so {plan['assumed_year']} was used")
         return done(answer=answer, value=value, unit=unit,
                     assumptions=(["Scope: " + ", ".join(scope)] if scope else []) + res.get("assumptions", [])
                     + ([f"Data fingerprint {fp}: re-runs check it, so any edit to the CSVs is caught"] if fp else []),
