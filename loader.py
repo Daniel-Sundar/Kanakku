@@ -26,5 +26,7 @@ def load_folder(path: str) -> dict[str, pd.DataFrame]:
             df = pd.read_excel(f, dtype=str)
         else:
             continue
-        tables[f.stem] = df.apply(_maybe_numeric)
+        df = df.apply(_maybe_numeric)
+        df.attrs["source_dir"] = str(path)   # lets the engine write proofs that read the same folder
+        tables[f.stem] = df
     return tables
