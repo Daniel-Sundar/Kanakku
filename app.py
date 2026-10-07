@@ -1,510 +1,270 @@
-"""Kanakku - The PA.  Owner: A.   Run: streamlit run app.py
+"""ProofPilot screen.   Run:  streamlit run app.py
 
-A polished Streamlit interface for Proof-Carrying Data Analysis:
-- Injected CSS styling (deep green brand, gold accents, soft shadow cards)
-- Dataset selection, "How Kanakku works" workflow, and session history in sidebar
-- High-level metrics row (Tables, Total rows, Traps found)
-- Trap Radar grid with colored cards and trap-type icons
-- Question analysis with example queries, proof code viewer, and re-run verification
+Calls only the frozen contract:
+  load_folder(path) -> tables        profile_all(tables) -> flags
+  run_question(question, tables, flags) -> result        rerun_proof(proof_path) -> {"value", "match"}
 """
+import datetime as dt
 import html
-import os
+import uuid
 from pathlib import Path
 
 import streamlit as st
 
 from engine import rerun_proof, run_question
+from ingest import save_uploads
 from loader import load_folder
 from profiler import profile_all
 
-st.set_page_config(page_title="Kanakku - The PA", layout="wide")
-
-# ---- CSS Injection -------------------------------------------------------
-st.markdown(
-    """<style>
-/* Light theme */
-:root {
-    --brand-green: #0f5c4a;
-    --brand-gold: #f2b705;
+ROOT = Path(__file__).resolve().parent
+REPO_URL = "https://github.com/Daniel-Sundar/Kanakku"
+DEMO_LABELS = {"nimbus_retail": "Nimbus Retail (300 orders, 4 tables)",
+               "example": "Tiny example (7 orders)", "canteen": "Campus canteen (50 sales)"}
+EXAMPLES = {
+    "nimbus_retail": ["What was revenue from USD orders in January 2024?",
+                      "Total revenue in April 2024 in USD?",
+                      "Total revenue in June 2024 in USD?",
+                      "Why did revenue drop in February?"],
+    "example": ["What was revenue from USD orders in January 2024?",
+                "Total revenue in March 2024 in USD?",
+                "Revenue from North-region customers in March 2024 (USD)?",
+                "Which month had the highest profit?"],
+    "canteen": ["How many sales did Dosa Corner make in September 2024?",
+                "Total sales from Hostel Block in September 2024",
+                "Total sales in September 2024"],
 }
+GENERIC = ["What was the total amount in 2024?", "How many rows are there in 2024?"]
+TRAP_ICON = {"duplicate_rows": "🔁", "missing_values": "🕳️", "mixed_currency": "💱",
+             "ambiguous_date": "📅", "missing_period": "📆", "contradiction": "⚔️"}
+TRAP_NAME = {"duplicate_rows": "Duplicate rows", "missing_values": "Blank values",
+             "mixed_currency": "Mixed currencies", "ambiguous_date": "Ambiguous dates",
+             "missing_period": "Missing month", "contradiction": "Tables disagree"}
 
-.stApp {
-    background-color: #f8fafc;
-    color: #1e293b;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+st.set_page_config(page_title="ProofPilot · Numbers you can check", page_icon=str(ROOT / "assets" / "favicon.png"),
+                   layout="wide", initial_sidebar_state="auto",
+                   menu_items={"About": "ProofPilot: every number comes with a Python proof you can re-run. "
+                                        "HackNex 2026 · HNX26PSI08."})
+
+st.markdown("""
+<style>
+html, body, [data-testid="stAppViewContainer"], .main { overflow-x: hidden !important; max-width: 100vw; }
+.block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1150px; }
+:root { --brand: #0f5c4a; --gold: #f2b705; --ink: #1f2330; --muted: #64748b; --line: #e2e8f0; }
+.pp-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 16px; }
+.pp-logo { display: flex; align-items: center; gap: 12px; text-decoration: none !important; }
+.pp-mark { width: 44px; height: 44px; border-radius: 12px; background: var(--brand); color: var(--gold);
+  display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 900; flex: none; }
+.pp-name { color: var(--brand); font-size: 1.7rem; font-weight: 800; line-height: 1.1; }
+.pp-tag { color: var(--muted); font-size: .95rem; }
+.pp-pill { background: #ecfdf5; color: var(--brand); border: 1px solid #a7f3d0; border-radius: 999px;
+  padding: 4px 12px; font-size: .8rem; font-weight: 700; white-space: nowrap; }
+.pp-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  margin-bottom: 10px; box-shadow: 0 1px 3px rgba(15,23,42,.06); overflow-wrap: anywhere; color: var(--ink); }
+.pp-trap { border-left: 5px solid #94a3b8; }
+.pp-trap.high { border-left-color: #dc2626; } .pp-trap.medium { border-left-color: #f59e0b; }
+.pp-trap b { display: block; margin-bottom: 2px; }
+.pp-small { color: var(--muted); font-size: .82rem; }
+.pp-answer { border-top: 5px solid #16a34a; } .pp-refuse { border-top: 5px solid #dc2626; }
+.pp-error { border-top: 5px solid #94a3b8; }
+.pp-big { font-size: clamp(1.4rem, 5vw, 2.3rem); font-weight: 800; color: var(--ink); line-height: 1.2; }
+.pp-step { display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: var(--brand);
+  color: #fff; text-align: center; font-size: .75rem; line-height: 22px; margin-right: 6px; }
+.pp-footer { border-top: 1px solid var(--line); margin-top: 28px; padding-top: 12px; color: var(--muted);
+  font-size: .85rem; display: flex; gap: 14px; flex-wrap: wrap; justify-content: space-between; }
+.pp-footer a { color: var(--brand); }
+pre, code { white-space: pre-wrap !important; overflow-wrap: anywhere; }
+[data-testid="stDataFrame"] { max-width: 100%; }
+[data-testid="column"], [data-testid="stColumn"] { min-width: 0 !important; }
+.pp-card, .pp-header { box-sizing: border-box; max-width: 100%; }
+@media (max-width: 640px) {
+  .block-container { padding-left: .8rem; padding-right: .8rem; }
+  .pp-name { font-size: 1.35rem; } .pp-tag { font-size: .85rem; }
+  .stButton button { width: 100%; }
 }
+</style>""", unsafe_allow_html=True)
 
-/* Headings */
-h1, h2, h3, h4, .stHeading {
-    color: #0f5c4a !important;
-    font-weight: 700 !important;
-    letter-spacing: -0.02em;
-}
-
-h1 {
-    font-size: 2.3rem !important;
-    margin: 0 !important;
-}
-
-h2 {
-    font-size: 1.6rem !important;
-    margin-top: 1.75rem !important;
-    margin-bottom: 0.75rem !important;
-}
-
-h3 {
-    font-size: 1.25rem !important;
-    margin-top: 1.5rem !important;
-    margin-bottom: 0.5rem !important;
-}
-
-/* Spacing */
-.block-container {
-    padding-top: 2rem !important;
-    padding-bottom: 3.5rem !important;
-    max-width: 1200px;
-}
-
-/* White cards with 12px rounded corners and soft shadow */
-[data-testid="stMetric"], div[data-testid="stVerticalBlockBorderWrapper"] {
-    background-color: #ffffff !important;
-    border: 1px solid #e2e8f0 !important;
-    border-radius: 12px !important;
-    padding: 16px 20px !important;
-    box-shadow: 0 4px 12px rgba(15, 92, 74, 0.05), 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-[data-testid="stMetric"]:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(15, 92, 74, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04) !important;
-}
-
-[data-testid="stMetricLabel"] {
-    color: #64748b !important;
-    font-size: 0.875rem !important;
-    font-weight: 600 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-[data-testid="stMetricValue"] {
-    color: #0f5c4a !important;
-    font-size: 2rem !important;
-    font-weight: 700 !important;
-}
-
-/* AI Mode pill */
-.ai-mode-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background-color: #e6f4ea;
-    color: #0f5c4a;
-    border: 1px solid #b7e1cd;
-    border-radius: 9999px;
-    padding: 5px 14px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    text-transform: lowercase;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-}
-
-.ai-mode-pill::before {
-    content: "●";
-    color: #0f5c4a;
-    font-size: 0.75rem;
-}
-
-/* Trap Radar cards */
-.trap-card {
-    background-color: #ffffff;
-    border-radius: 12px;
-    border: 1px solid #e2e8f0;
-    border-left-width: 5px !important;
-    border-left-style: solid !important;
-    padding: 16px 18px;
-    margin-bottom: 16px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.04);
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-    min-height: 110px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-}
-
-.trap-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.07);
-}
-
-.trap-card-high {
-    border-left-color: #dc3545 !important;
-}
-
-.trap-card-medium {
-    border-left-color: #fd7e14 !important;
-}
-
-.trap-card-low {
-    border-left-color: #6c757d !important;
-}
-
-.trap-card-clean {
-    border-left-color: #0f5c4a !important;
-    background-color: #f0fdf4 !important;
-}
-
-.trap-card-msg {
-    font-weight: 700;
-    color: #1e293b;
-    font-size: 0.95rem;
-    line-height: 1.4;
-    margin-bottom: 8px;
-}
-
-.trap-card-meta {
-    color: #64748b;
-    font-size: 0.82rem;
-    font-weight: 500;
-}
-
-/* Buttons with deep green & gold accent */
-button[kind="primary"], .stButton > button[kind="primary"] {
-    background-color: #0f5c4a !important;
-    color: #ffffff !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    border: 1px solid #0f5c4a !important;
-    padding: 0.5rem 1.25rem !important;
-    transition: all 0.2s ease !important;
-}
-
-button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover {
-    background-color: #0c4a3b !important;
-    border-color: #f2b705 !important;
-    box-shadow: 0 0 0 2px #f2b705 !important;
-    color: #ffffff !important;
-}
-
-/* Result cards with top borders */
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.result-top-green) {
-    border-top: 5px solid #0f5c4a !important;
-}
-
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.result-top-red) {
-    border-top: 5px solid #dc3545 !important;
-}
-
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.result-top-grey) {
-    border-top: 5px solid #64748b !important;
-}
-
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background-color: #ffffff !important;
-    border-right: 1px solid #e2e8f0 !important;
-}
-</style>""",
-    unsafe_allow_html=True,
-)
-
-# ---- Helper functions ----------------------------------------------------
-def _trap_icon(flag: dict) -> str:
-    trap = str(flag.get("trap", "")).lower()
-    msg = str(flag.get("message", "")).lower()
-    col = str(flag.get("column", "")).lower()
-
-    if "month" in trap or "period" in trap or "month" in msg or "month" in col:
-        return "📆"
-    if "dup" in trap or "duplicate" in msg:
-        return "🔁"
-    if "curr" in trap or "currency" in msg or "currency" in col:
-        return "💱"
-    if "date" in trap or "date" in msg or "date" in col:
-        return "📅"
-    if "contradiction" in trap or "differ" in msg or "contradict" in msg:
-        return "⚔"
-    if "missing" in trap or "missing" in msg or "blank" in msg:
-        return "🕳"
-    return "⚠"
+ss = st.session_state
+ss.setdefault("history", [])
+ss.setdefault("upload_dir", f"data/uploads/{uuid.uuid4().hex[:8]}")
 
 
-SEVERITY_CLASS = {
-    "high": "trap-card-high",
-    "medium": "trap-card-medium",
-    "low": "trap-card-low",
-}
+def esc(x) -> str:
+    return html.escape(str(x))
 
-def _set_question(q: str):
-    st.session_state["question_input"] = q
 
-# ---- Session State Initialization ----------------------------------------
-if "question_input" not in st.session_state:
-    st.session_state["question_input"] = ""
-if "history" not in st.session_state:
-    st.session_state["history"] = []
-
-# ---- Header --------------------------------------------------------------
-ai_mode = os.getenv("LLM_MODE", "replay").lower()
-if "result" in st.session_state and st.session_state["result"].get("llm_mode"):
-    ai_mode = str(st.session_state["result"]["llm_mode"]).lower()
-
-header_html = f"""<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem; padding-bottom: 1.25rem; border-bottom: 1px solid #e2e8f0;">
-    <div>
-        <h1 style="color: #0f5c4a; font-size: 2.3rem; font-weight: 800; margin: 0; line-height: 1.2;">Kanakku - The PA</h1>
-        <div style="color: #64748b; font-size: 1.05rem; margin-top: 0.35rem;">Numbers you can check, not just trust.</div>
-    </div>
-    <div style="padding-top: 0.35rem;">
-        <span class="ai-mode-pill">{ai_mode}</span>
-    </div>
-</div>"""
-st.markdown(header_html, unsafe_allow_html=True)
-
-# ---- Sidebar -------------------------------------------------------------
-datasets = sorted(p.name for p in Path("data").iterdir() if p.is_dir() and any(p.glob("*.csv")))
+# ---- Sidebar (on phones this collapses into the menu button) ---------------
 with st.sidebar:
-    st.header("Datasets")
-    choice = st.selectbox("Dataset", datasets)
-
-    st.markdown("---")
-    st.subheader("How Kanakku works")
-    st.markdown(
-        """1. Load data
-2. Trap Radar checks it
-3. AI writes pandas code
-4. runs in a sandbox
-5. proof re-run in a fresh process
-6. answer or refuse"""
-    )
-
-    st.markdown("---")
-    st.subheader("History")
-    history_placeholder = st.empty()
-
-
-def _render_history():
-    hist = st.session_state.get("history", [])
-    with history_placeholder.container():
-        if hist:
-            for item in reversed(hist):
-                if isinstance(item, dict):
-                    q_text = item.get("question", "")
-                    status = str(item.get("status", "error")).lower()
-                elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                    q_text = str(item[0])
-                    status = str(item[1]).lower()
-                else:
-                    q_text = str(item)
-                    status = "error"
-                dot = "🟢" if status == "answered" else ("🔴" if status == "abstained" else "⚪")
-                st.markdown(f"{dot} {q_text}")
-        else:
-            st.caption("No questions asked yet.")
-
-
-_render_history()
-
-tables = load_folder(f"data/{choice}")
-flags = profile_all(tables)
-
-# ---- Metrics Row ---------------------------------------------------------
-m1, m2, m3 = st.columns(3)
-total_tables = len(tables)
-total_rows = sum(len(df) for df in tables.values())
-traps_found = len(flags)
-
-m1.metric("Tables", total_tables)
-m2.metric("Total rows", total_rows)
-m3.metric("Traps found", traps_found)
-
-# ---- Trap Radar Section --------------------------------------------------
-st.subheader("Trap Radar")
-
-if flags:
-    for i in range(0, len(flags), 3):
-        chunk = flags[i : i + 3]
-        cols = st.columns(3)
-        for col, flag in zip(cols, chunk):
-            sev = str(flag.get("severity", "low")).lower()
-            sev_cls = SEVERITY_CLASS.get(sev, "trap-card-low")
-            icon = _trap_icon(flag)
-            msg = html.escape(str(flag.get("message", "")))
-            tbl = html.escape(str(flag.get("table", "")))
-            c_name = html.escape(str(flag.get("column", "")))
-            n_rows = flag.get("count", 0)
-
-            card_html = f"""<div class="trap-card {sev_cls}">
-                <div class="trap-card-msg"><span>{icon}</span> <strong>{msg}</strong></div>
-                <div class="trap-card-meta">{tbl}.{c_name} · {n_rows} rows</div>
-            </div>"""
-            with col:
-                st.markdown(card_html, unsafe_allow_html=True)
-else:
-    green_card_html = """<div class="trap-card trap-card-clean">
-        <div class="trap-card-msg" style="color: #0f5c4a; margin-bottom: 0;">
-            <span>✔</span> <strong>No traps found</strong>
-        </div>
-    </div>"""
-    st.markdown(green_card_html, unsafe_allow_html=True)
-
-# ---- Question & Result ---------------------------------------------------
-st.subheader("Ask Kanakku")
-
-col_q, col_btn = st.columns([5, 1])
-with col_q:
-    question = st.text_input(
-        "Ask a question about this data",
-        placeholder="Ask anything about this data...",
-        key="question_input",
-        label_visibility="collapsed",
-    )
-with col_btn:
-    ask_clicked = st.button("Ask Kanakku", type="primary", use_container_width=True)
-
-# 3 example buttons that fill the box when clicked
-ex1_text = "What was revenue from USD orders in January 2024?"
-ex2_text = "Total revenue in March 2024 in USD?"
-ex3_text = "Why did sales drop in February?"
-
-col_e1, col_e2, col_e3 = st.columns(3)
-with col_e1:
-    st.button(ex1_text, on_click=_set_question, args=(ex1_text,), use_container_width=True)
-with col_e2:
-    st.button(ex2_text, on_click=_set_question, args=(ex2_text,), use_container_width=True)
-with col_e3:
-    st.button(ex3_text, on_click=_set_question, args=(ex3_text,), use_container_width=True)
-
-if ask_clicked and question:
-    with st.spinner("Checking the data..."):
-        result = run_question(question, tables, flags)
-        st.session_state["result"] = result
-        st.session_state["history"].append({
-            "question": question,
-            "status": result.get("status", "error"),
-        })
-        _render_history()
-
-result = st.session_state.get("result")
-if result:
-    status = result.get("status", "error")
-    seconds = result.get("seconds", 0)
-
-    if status == "answered":
-        with st.container(border=True):
-            st.markdown(
-                """<div class="result-top-green" style="height: 5px; background-color: #0f5c4a; margin: -1rem -1rem 1rem -1rem; border-top: 5px solid #0f5c4a; border-top-left-radius: 10px; border-top-right-radius: 10px;"></div>""",
-                unsafe_allow_html=True,
-            )
-
-            is_dict_val = isinstance(result.get("value"), dict)
-            if is_dict_val:
-                val_dict = result["value"]
-                v_dd = val_dict.get("if_DD/MM")
-                v_mm = val_dict.get("if_MM/DD")
-                unit_prefix = "$" if result.get("unit") == "USD" else ""
-
-                def _fmt(v):
-                    if isinstance(v, (int, float)):
-                        return f"{unit_prefix}{v:,.2f}"
-                    return f"{unit_prefix}{v}" if unit_prefix and not str(v).startswith(unit_prefix) else str(v)
-
-                col_m1, col_m2 = st.columns(2)
-                col_m1.metric("If dates are DD/MM", _fmt(v_dd))
-                col_m2.metric("If dates are MM/DD", _fmt(v_mm))
-                st.markdown(
-                    f"""<div style="font-size: 0.85rem; color: #64748b; margin-top: 4px; margin-bottom: 12px;">
-                        <span style="color: #0f5c4a; font-weight: 600;">Verified ✔</span> · {seconds}s
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
-            else:
-                ans_text = html.escape(str(result.get("answer", "")))
-                st.markdown(
-                    f"""<div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px;">
-                        <div style="font-size: 2.2rem; font-weight: 800; color: #0f5c4a; line-height: 1.1;">{ans_text}</div>
-                        <div style="font-size: 0.85rem; color: #64748b;">
-                            <span style="color: #0f5c4a; font-weight: 600;">Verified ✔</span> · {seconds}s
-                        </div>
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
-
-            tab_answer, tab_code, tab_assumptions = st.tabs(["Answer", "Proof code", "Assumptions"])
-
-            with tab_answer:
-                st.write(result.get("answer", ""))
-
-            with tab_code:
-                st.code(result.get("code", ""), language="python")
-                col_btn1, col_btn2 = st.columns([1, 1])
-                with col_btn1:
-                    if st.button("Re-run proof"):
-                        rerun_res = rerun_proof(result["proof_path"])
-                        if rerun_res.get("match"):
-                            st.success("Re-ran in a fresh process: same number ✔")
-                        else:
-                            st.error("did not match")
-                with col_btn2:
-                    proof_path = result.get("proof_path", "")
-                    proof_data = ""
-                    file_name = "proof.py"
-                    if proof_path and Path(proof_path).exists():
-                        try:
-                            with open(proof_path, "r", encoding="utf-8") as f:
-                                proof_data = f.read()
-                            file_name = Path(proof_path).name
-                        except Exception:
-                            proof_data = result.get("code", "")
-                    else:
-                        proof_data = result.get("code", "")
-                        if proof_path:
-                            file_name = Path(proof_path).name
-
-                    st.download_button(
-                        "Download proof",
-                        data=proof_data,
-                        file_name=file_name,
-                        mime="text/x-python",
-                    )
-
-            with tab_assumptions:
-                assumptions = result.get("assumptions", [])
-                if assumptions:
-                    if isinstance(assumptions, list):
-                        for asm in assumptions:
-                            st.markdown(f"- {asm}")
-                    elif isinstance(assumptions, dict):
-                        for k, v in assumptions.items():
-                            st.markdown(f"- **{k}**: {v}")
-                    else:
-                        st.markdown(f"- {assumptions}")
-                else:
-                    st.write("No assumptions made.")
-
-    elif status == "abstained":
-        with st.container(border=True):
-            st.markdown(
-                """<div class="result-top-red" style="height: 5px; background-color: #dc3545; margin: -1rem -1rem 1rem -1rem; border-top: 5px solid #dc3545; border-top-left-radius: 10px; border-top-right-radius: 10px;"></div>""",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                """<div style="font-size: 1.35rem; font-weight: 700; color: #dc3545; margin-bottom: 12px;">I can't answer this reliably</div>""",
-                unsafe_allow_html=True,
-            )
-            reason = result.get("reason", "")
-            needed = result.get("needed", "")
-            st.markdown(f"**Why:** {reason}")
-            st.markdown(f"**What I'd need:** {needed}")
-
+    st.markdown("### Data")
+    source = st.radio("Where is your data?", ["Demo datasets", "Upload my files"], label_visibility="collapsed")
+    folder, dataset_key = None, None
+    if source == "Demo datasets":
+        demos = [d for d in DEMO_LABELS if (ROOT / "data" / d).is_dir()]
+        dataset_key = st.selectbox("Dataset", demos, format_func=lambda d: DEMO_LABELS[d])
+        folder = f"data/{dataset_key}"
     else:
-        with st.container(border=True):
-            st.markdown(
-                """<div class="result-top-grey" style="height: 5px; background-color: #64748b; margin: -1rem -1rem 1rem -1rem; border-top: 5px solid #64748b; border-top-left-radius: 10px; border-top-right-radius: 10px;"></div>""",
-                unsafe_allow_html=True,
-            )
-            reason = result.get("reason", "") or result.get("answer", "") or "An unexpected error occurred."
-            st.markdown(
-                f"""<div style="font-size: 1.1rem; font-weight: 600; color: #1e293b; margin-top: 4px;">{html.escape(str(reason))}</div>""",
-                unsafe_allow_html=True,
-            )
+        files = st.file_uploader("CSV, Excel, PDF or Word (tables are read from PDF/Word)",
+                                 type=["csv", "xlsx", "xls", "pdf", "docx"], accept_multiple_files=True)
+        if files:
+            sig = tuple((f.name, f.size) for f in files)
+            if ss.get("upload_sig") != sig:
+                written, errors = save_uploads([(f.name, f.getvalue()) for f in files], ROOT / ss["upload_dir"])
+                ss["upload_sig"], ss["upload_msgs"] = sig, (written, errors)
+                ss.pop("result", None)
+            written, errors = ss["upload_msgs"]
+            for e in errors:
+                st.error(e)
+            if written:
+                st.success(f"Loaded {len(written)} table(s): {', '.join(written)}")
+                folder = ss["upload_dir"]
+        else:
+            st.info("Upload one or more files. Put related tables together (e.g. orders + customers + exchange rates).")
+    st.markdown("---")
+    st.markdown("### How ProofPilot works")
+    for i, s in enumerate(["Load your tables", "Trap Radar checks the data", "AI turns your question into a plan",
+                           "A Python proof runs in a sandbox", "The proof is re-run in a fresh process",
+                           "Answer with proof, or refuse with the reason"], 1):
+        st.markdown(f'<span class="pp-step">{i}</span>{s}', unsafe_allow_html=True)
+    if ss["history"]:
+        st.markdown("---")
+        st.markdown("### History")
+        for h in ss["history"][:8]:
+            dot = {"answered": "🟢", "abstained": "🔴"}.get(h["status"], "⚪")
+            st.markdown(f"{dot} {esc(h['q'])}", unsafe_allow_html=True)
+
+# ---- Header ----------------------------------------------------------------
+mode = ss["result"]["llm_mode"] if ss.get("result") else "ready"
+st.markdown(f"""
+<div class="pp-header">
+  <a class="pp-logo" href="./" target="_self" title="ProofPilot home">
+    <div class="pp-mark">✓</div>
+    <div><div class="pp-name">ProofPilot</div><div class="pp-tag">Numbers you can check, not just trust.</div></div>
+  </a>
+  <span class="pp-pill" title="Which planner answered the last question">AI mode: {esc(mode)}</span>
+</div>""", unsafe_allow_html=True)
+
+tables = {}
+if not folder:
+    st.info("Pick a demo dataset or upload your files in the menu to start.")
+else:
+    try:
+        tables = load_folder(folder)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Couldn't load the data: {e}")
+
+if tables:
+    flags = profile_all(tables)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Tables", len(tables))
+    c2.metric("Rows", f"{sum(len(t) for t in tables.values()):,}")
+    c3.metric("Traps found", len(flags))
+
+    with st.expander("Preview the data", expanded=False):
+        name = st.selectbox("Table", list(tables), key=f"preview_{folder}")
+        st.dataframe(tables[name].head(50), use_container_width=True)
+
+    st.subheader("🛰️ Trap Radar")
+    if not flags:
+        st.success("No traps found. This data looks clean.")
+    else:
+        cols = st.columns(3)
+        for i, f in enumerate(flags):
+            where = f"{f['table']}.{f['column']}" if f["column"] != "*" else f["table"]
+            rows = f" · rows {', '.join(map(str, f['example_rows']))}" if f["example_rows"] else ""
+            cols[i % 3].markdown(
+                f'<div class="pp-card pp-trap {esc(f["severity"])}">'
+                f'<b>{TRAP_ICON.get(f["trap"], "⚠️")} {esc(TRAP_NAME.get(f["trap"], f["trap"]))}</b>'
+                f'{esc(f["message"])}<div class="pp-small">{esc(where)}{esc(rows)}</div></div>',
+                unsafe_allow_html=True)
+
+    # ---- Ask ---------------------------------------------------------------
+    st.subheader("💬 Ask a question")
+    examples = EXAMPLES.get(dataset_key, GENERIC)
+    ex_cols = st.columns(len(examples))
+    for i, ex in enumerate(examples):
+        if ex_cols[i].button(ex, key=f"ex_{dataset_key}_{i}", use_container_width=True):
+            ss["question"] = ex
+            ss["run_now"] = True
+    with st.form("ask", border=False):
+        st.text_input("Your question", key="question", label_visibility="collapsed",
+                      placeholder="e.g. What was revenue from USD orders in January 2024?")
+        submitted = st.form_submit_button("Ask ProofPilot", type="primary", use_container_width=True)
+    if submitted or ss.pop("run_now", False):
+        question = ss.get("question", "").strip()
+        if not question:
+            st.warning("Type a question first.")
+        else:
+            with st.spinner("Checking the data and building the proof…"):
+                try:
+                    r = run_question(question, tables, flags)
+                except Exception as e:  # noqa: BLE001
+                    r = {"status": "error", "reason": f"Something went wrong: {e}", "answer": "", "value": None,
+                         "unit": "", "assumptions": [], "code": "", "proof_path": "", "rerun_match": False,
+                         "needed": "", "llm_mode": "error", "seconds": 0}
+            r["question"] = question
+            ss["result"] = r
+            ss.pop("rerun", None)
+            ss["history"].insert(0, {"q": question, "status": r["status"]})
+            st.rerun()
+
+    # ---- Result ------------------------------------------------------------
+    r = ss.get("result")
+    if r:
+        st.markdown(f"**Q:** {esc(r.get('question', ''))}")
+        if r["status"] == "answered":
+            if isinstance(r["value"], dict):
+                st.markdown('<div class="pp-card pp-answer"><div class="pp-big">Two possible answers</div>'
+                            '<div class="pp-small">A date in the data can be read two ways, so both are proven'
+                            '</div></div>', unsafe_allow_html=True)
+                mcols = st.columns(len(r["value"]))
+                for c, (k, v) in zip(mcols, r["value"].items()):
+                    shown = f"{v:,.2f} {r['unit']}".strip() if isinstance(v, float) else f"{v:,}"
+                    c.metric("If dates are " + k.replace("if_", ""), shown)
+            else:
+                st.markdown(f'<div class="pp-card pp-answer"><div class="pp-big">{esc(r["answer"])}</div>'
+                            f'<div class="pp-small">Verified ✔ re-run in a fresh process · {r["seconds"]}s · '
+                            f'planner: {esc(r["llm_mode"])}</div></div>', unsafe_allow_html=True)
+            st.success("Answer verified: the proof ran twice in fresh processes and gave the same result.")
+            tab1, tab2 = st.tabs(["🧾 How it was worked out", "🐍 Proof code"])
+            with tab1:
+                for a in r["assumptions"] or ["No traps touched this answer."]:
+                    st.markdown(f"- {a}")
+            with tab2:
+                st.code(r["code"], language="python")
+                b1, b2 = st.columns(2)
+                if b1.button("🔁 Re-run proof", use_container_width=True):
+                    try:
+                        ss["rerun"] = rerun_proof(r["proof_path"])
+                    except Exception as e:  # noqa: BLE001
+                        ss["rerun"] = {"match": False, "value": str(e)}
+                p = ROOT / r["proof_path"] if r["proof_path"] else None
+                if p and p.exists():
+                    b2.download_button("⬇️ Download proof", p.read_text(), file_name=p.name,
+                                       mime="text/x-python", use_container_width=True)
+                if "rerun" in ss:
+                    if ss["rerun"]["match"]:
+                        st.success(f"Re-ran in a fresh process: same answer ({ss['rerun']['value']}) ✔")
+                    else:
+                        st.error(f"Re-run did NOT match: {ss['rerun']['value']}")
+                st.caption(f"Run it yourself:  python {r['proof_path']}")
+        elif r["status"] == "abstained":
+            st.markdown(f'<div class="pp-card pp-refuse"><div class="pp-big">I can\'t answer this reliably</div>'
+                        f'<p><b>Why:</b> {esc(r["reason"])}</p><p><b>What I\'d need:</b> {esc(r["needed"])}</p>'
+                        f'</div>', unsafe_allow_html=True)
+            st.info("Refusing is on purpose: a confident wrong number is worse than an honest \"I can't tell\".")
+            if r.get("code"):
+                with st.expander("🐍 The proof that found the problem"):
+                    st.code(r["code"], language="python")
+        else:
+            st.markdown(f'<div class="pp-card pp-error"><div class="pp-big">Something went wrong</div>'
+                        f'<p>{esc(r["reason"])}</p></div>', unsafe_allow_html=True)
+            st.error("Try rephrasing the question, e.g. include a month and a currency.")
+
+# ---- Footer ----------------------------------------------------------------
+st.markdown(f"""
+<div class="pp-footer">
+  <span>© {dt.date.today().year} ProofPilot · HackNex 2026 · HNX26PSI08</span>
+  <span><a href="{REPO_URL}" target="_blank" rel="noopener">Source code</a> ·
+  <a href="{REPO_URL}#readme" target="_blank" rel="noopener">How to reproduce</a> ·
+  <a href="{REPO_URL}/issues" target="_blank" rel="noopener">Report a problem</a></span>
+</div>""", unsafe_allow_html=True)
