@@ -1,3 +1,4 @@
+# Trap Radar detectors - maintained by Aaron (B)
 """Trap detectors.  Owner: B.
 
 Fill in the 4 functions marked TODO. Do NOT change their names or arguments.
