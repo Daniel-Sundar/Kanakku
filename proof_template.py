@@ -23,6 +23,7 @@ DATE_COL = {date_col!r}
 VALUE_COL = {value_col!r}       # None means "count rows"
 AGG = {agg!r}                   # sum | count | mean
 MONTHS = {months!r}             # months in scope, [] = all
+DAYS = {days!r}                 # [first day, last day] when the question gives exact dates
 CURRENCY_COL = {currency_col!r}
 CURRENCY_MODE = {currency_mode!r}   # filter | convert | none
 CURRENCY = {currency!r}
@@ -49,7 +50,7 @@ if dupes:
     df = df.drop_duplicates()
 if VALUE_COL:
     df[VALUE_COL] = pd.to_numeric(df[VALUE_COL], errors="coerce")
-id_col = next((c for c in df.columns if c.lower().endswith("id") and c != KEY_COL), None)
+id_col = next((c for c in df.columns if c.lower().endswith(("id", "_no", "number")) and c != KEY_COL), None)
 label = (lambda i: str(df.loc[i, id_col])) if id_col else (lambda i: f"row {{i}}")
 
 # Trap 2: a date like 03/02/2024 can be read two ways, so we compute both readings.
@@ -68,6 +69,19 @@ def to_month(value, reading):
     if month > 12:                      # only one reading is a real date
         day, month = month, day
     return f"{{y}}-{{month:02d}}"
+
+def to_day(value, reading):
+    s = str(value).strip()
+    if ISO.match(s):
+        return s[:10]
+    m = SLASH.match(s)
+    if not m:
+        return None
+    a, b, y = int(m.group(1)), int(m.group(2)), m.group(3)
+    day, month = (a, b) if reading == "DD/MM" else (b, a)
+    if month > 12:
+        day, month = month, day
+    return f"{{y}}-{{month:02d}}-{{day:02d}}"
 
 ambiguous = []
 if DATE_COL:
@@ -98,13 +112,17 @@ def compute(reading):
             return {{"abstain": f"there are no rows for {{MONTHS[0]}}" + (f" to {{MONTHS[-1]}}" if len(MONTHS) > 1 else "")
                                + (f"; the data covers {{have[0]}} to {{have[-1]}}" if have else ""),
                     "needed": "data for that period, or ask about a period inside the data"}}
+        if DAYS:
+            day = d[DATE_COL].apply(lambda v: to_day(v, reading))
+            d = d[(day >= DAYS[0]) & (day <= DAYS[1])]
     # Trap 3: the same customer described differently in two tables.
     for col, want in FILTERS.items():
         sources = [(n, t) for n, t in tables.items() if n != FACT and col in t.columns and KEY_COL in t.columns]
         maps = [(n, dict(zip(t[KEY_COL], t[col]))) for n, t in sources]
         for k in d[KEY_COL].dropna().unique():
             vals = {{n: m.get(k) for n, m in maps if k in m}}
-            if len(set(vals.values())) > 1:
+            # only a disagreement that changes whether this row is in or out matters
+            if len(set(vals.values())) > 1 and any(str(v).lower() == str(want).lower() for v in vals.values()):
                 return {{"abstain": f"{{KEY_COL}} {{k}} has {{col}} " + " vs ".join(f"{{v}} in {{n}}" for n, v in vals.items()),
                         "needed": f"which table is correct for {{k}}'s {{col}}"}}
         lookup = {{}}

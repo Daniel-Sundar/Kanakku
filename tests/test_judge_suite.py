@@ -51,7 +51,8 @@ def nimbus_oracle(month, mode, agg="sum", region=None):
         b = pd.read_csv(ROOT / "data/nimbus_retail/customers_billing.csv", dtype=str)
         c = pd.read_csv(ROOT / "data/nimbus_retail/customers_crm.csv", dtype=str)
         rb, rc = dict(zip(b.customer_id, b.region)), dict(zip(c.customer_id, c.region))
-        if any(rb.get(k) != rc.get(k) for k in o.customer_id.unique() if k in rb and k in rc):
+        if any(rb.get(k) != rc.get(k) and region in (rb.get(k), rc.get(k))
+               for k in o.customer_id.unique() if k in rb and k in rc):
             return "abstained", None
         o = o[o.customer_id.map(rb) == region]
     if agg == "count":
@@ -259,3 +260,21 @@ def test_tampered_data_is_caught(tmp_path):
         assert engine.rerun_proof(r["proof_path"])["match"] is False
     finally:
         shutil.rmtree(ROOT / "data/_tamper")
+
+
+# ---------- 9. Exact date ranges vs the oracle : 3 ----------
+@pytest.mark.parametrize("q,lo,hi", [
+    ("total revenue from 2024-1-2 to 2024-2-6 here is in the format of year/month/date", "2024-01-02", "2024-02-06"),
+    ("What was revenue from USD orders from 2024-02-10 to 2024-02-20?", "2024-02-10", "2024-02-20"),
+    ("Total USD revenue from 2024/05/01 to 2024/05/31", "2024-05-01", "2024-05-31"),
+])
+def test_nimbus_date_ranges(q, lo, hi):
+    o = pd.read_csv(ROOT / "data/nimbus_retail/orders.csv", dtype=str).drop_duplicates()
+    o = o[~o.order_date.str.contains("/") & (o.order_date >= lo) & (o.order_date <= hi)]
+    if "orders" in q:
+        o = o[o.currency == "USD"]
+    assert (o.currency == "USD").all() or "USD revenue" in q
+    fx = pd.read_csv(ROOT / "data/nimbus_retail/fx_rates.csv", dtype=str)
+    rate = o.order_date.str[:7].map(dict(zip(fx.month, fx.eur_to_usd.astype(float))))
+    amt = pd.to_numeric(o.amount) * rate.where(o.currency == "EUR", 1.0)
+    check_answer(ask("nimbus_retail", q), "answered", round(float(amt.sum()), 2))

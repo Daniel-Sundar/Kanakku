@@ -35,7 +35,7 @@ EXAMPLES = {
     "nimbus_retail": ["What was revenue from USD orders in January 2024?",
                       "Total revenue in April 2024 in USD?",
                       "Total revenue in June 2024 in USD?",
-                      "Total USD revenue for North customers in March 2024",
+                      "Total USD revenue for West customers in March 2024",
                       "Total revenue in 2019 in USD",
                       "Which month had the highest profit?",
                       "Why did revenue drop in February?"],
@@ -96,6 +96,11 @@ h1 { font-size: 1.75rem !important; } h2 { font-size: 1.35rem !important; } h3 {
 .stButton button, .stDownloadButton button, .stFormSubmitButton button { border-radius: var(--r); }
 pre, code { white-space: pre-wrap !important; overflow-wrap: anywhere; }
 [data-testid="column"], [data-testid="stColumn"] { min-width: 0 !important; }
+.pp-brand { position: fixed; top: 14px; right: 64px; z-index: 999991; font-weight: 700; font-size: 1.1rem;
+  color: var(--primary) !important; text-decoration: none !important; }
+.pp-side-name { font-size: 1.3rem; font-weight: 700; color: var(--primary); }
+.st-key-theme_toggle { position: fixed; bottom: 16px; right: 16px; z-index: 999990; width: auto !important; }
+.st-key-theme_toggle button { background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.15); }
 @media (max-width: 640px) {
   .block-container { padding-left: 12px; padding-right: 12px; padding-top: 16px; }
   .pp-hero { padding: 32px 8px 24px; }
@@ -109,7 +114,26 @@ ss = st.session_state
 ss.setdefault("history", [])
 ss.setdefault("dataset", None)              # {"kind": "demo"|"upload", "key", "label", "folder"}
 ss.setdefault("upload_dir", f"data/uploads/{uuid.uuid4().hex[:8]}")
-ss.setdefault("busy", False)
+ss.setdefault("theme", "light")
+if ss["theme"] == "dark":
+    st.markdown("""<style>:root { --primary: #5ec4a5; --bg: #1b2320; --bg2: #232d29; --ink: #e6ece9; --muted: #9fb0a9;
+  --line: #34413c; --ok: #4fbf84; --bad: #f0786b; }
+.stApp, [data-testid="stHeader"], [data-testid="stBottom"], [data-testid="stBottom"] > div,
+[data-testid="stBottomBlockContainer"] { background: #111816 !important; color: #e6ece9; }
+[data-testid="stSidebar"], [data-testid="stSidebar"] > div { background: #18211e !important; }
+.stApp p, .stApp li, .stApp label, .stApp span, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp summary,
+[data-testid="stMetricValue"], [data-testid="stMetricLabel"], [data-testid="stCaptionContainer"] { color: #e6ece9 !important; }
+[data-testid="stExpander"] details, [data-testid="stChatMessage"], [data-testid="stForm"],
+[data-testid="stFileUploaderDropzone"] { background: #1b2320 !important; border-color: #34413c !important; }
+.stApp input, .stApp textarea, [data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="textarea"],
+[data-baseweb="select"] > div, [data-testid="stChatInput"] > div { background: #232d29 !important; color: #e6ece9 !important; border-color: #34413c !important; }
+.stButton button[kind="secondary"], .stDownloadButton button, .st-key-theme_toggle button { background: #232d29 !important; color: #e6ece9 !important; border-color: #34413c !important; }
+.stApp pre, .stApp code, [data-testid="stCode"] > div { background: #1b2320 !important; color: #e6ece9 !important; }
+[data-testid="stSidebarNavLink"][aria-current="page"], [data-testid="stSidebarNavLink"]:hover { background: #232d29 !important; }
+.stTabs [data-baseweb="tab-list"] { border-color: #34413c; }
+.stApp ::placeholder { color: #9fb0a9 !important; opacity: 1; }
+[data-testid="stChatMessageAvatarCustom"], [data-testid^="stChatMessageAvatar"] { background: #232d29 !important; color: #e6ece9 !important; border-color: #34413c !important; }
+</style>""", unsafe_allow_html=True)
 ss.setdefault("user_name", "")
 ss.setdefault("planner", os.getenv("LLM_MODE", "cloud"))
 os.environ["LLM_MODE"] = ss["planner"]
@@ -287,32 +311,28 @@ def page_datasets():
             go("ask")
 
 
-def run_pending(tables, flags):
-    q = ss.pop("pending", None)
-    if not q:
-        return
-    with st.status("Working on it…", expanded=True) as status:
-        st.write("Checking the question against the data")
-        try:
-            r = run_question(q, tables, flags)
-            st.write("Proof ran, then re-ran in a fresh process")
-        except Exception as e:  # noqa: BLE001
-            r = {"status": "error", "reason": f"Something went wrong: {e}", "answer": "", "value": None,
-                 "unit": "", "assumptions": [], "code": "", "proof_path": "", "rerun_match": False,
-                 "needed": "", "llm_mode": "error", "seconds": 0}
-        status.update(label={"answered": "Answered with proof", "abstained": "Refused with a reason"}
-                      .get(r["status"], "Couldn't answer"), state="error" if r["status"] == "error" else "complete")
+def ask_now(q, tables, flags):
+    with st.chat_message("assistant", avatar=":material/fact_check:"):
+        with st.status("Checking the data and building the proof…", expanded=False) as status:
+            try:
+                r = run_question(q, tables, flags)
+            except Exception as e:  # noqa: BLE001
+                r = {"status": "error", "reason": f"Something went wrong: {e}", "answer": "", "value": None,
+                     "unit": "", "assumptions": [], "code": "", "proof_path": "", "rerun_match": False,
+                     "needed": "", "llm_mode": "error", "seconds": 0}
+            status.update(state="error" if r["status"] == "error" else "complete")
     r["question"] = q
-    ss["result"] = r
-    ss.pop("rerun", None)
+    r["folder"] = ss["dataset"]["folder"]
+    ss["chat"].append(r)
     ss["history"].insert(0, {"q": q, "status": r["status"], "answer": r["answer"], "reason": r["reason"],
                              "proof": r["proof_path"], "dataset": ss["dataset"]["label"],
                              "time": dt.datetime.now().strftime("%H:%M")})
-    ss["busy"] = False
     st.rerun()
 
 
 def page_ask():
+    ss.setdefault("chat", [])
+    ss.setdefault("reruns", {})
     st.title("Ask")
     dataset_bar()
     tables, flags, err = current_data()
@@ -320,47 +340,45 @@ def page_ask():
         st.error(err)
         return
     if not tables:
-        ss["busy"] = False
         st.markdown('<div class="pp-card"><b>No dataset selected</b><div class="pp-muted">Choose a sample dataset '
                     'or upload your files, then come back here to ask.</div></div>', unsafe_allow_html=True)
         return
     if flags:
         st.caption(f"Trap Radar found {len(flags)} issue(s) in this data. ProofPilot handles them or refuses.")
-    run_pending(tables, flags)
-    ss["busy"] = False
+    chat = [r for r in ss["chat"] if r.get("folder") == ss["dataset"]["folder"]]
+    if not chat:
+        st.markdown('<div class="pp-label">Try one of these</div>', unsafe_allow_html=True)
+        examples = EXAMPLES.get(ss["dataset"]["key"], GENERIC)
+        cols = st.columns(2)
+        for i, ex in enumerate(examples):
+            if cols[i % 2].button(ex, key=f"ex_{i}", use_container_width=True):
+                ss["pending"] = ex
+                st.rerun()
+    else:
+        c1, c2 = st.columns([4, 1])
+        c1.caption("Answers appear above the question box. Every number has a proof you can re-run.")
+        if c2.button("Clear chat", use_container_width=True):
+            ss["chat"] = [r for r in ss["chat"] if r.get("folder") != ss["dataset"]["folder"]]
+            st.rerun()
+    for i, r in enumerate(chat):
+        with st.chat_message("user", avatar=":material/person:"):
+            st.markdown(esc(r["question"]))
+        with st.chat_message("assistant", avatar=":material/fact_check:"):
+            show_result(r, i)
 
-    with st.form("ask"):
-        st.markdown("**Your question** <span class='pp-muted'>(required)</span>", unsafe_allow_html=True)
-        q = st.text_input("Your question", key="question", label_visibility="collapsed", max_chars=300,
-                          placeholder="e.g. What was revenue from USD orders in January 2024?")
-        st.caption("Ask about one number. Include a month or year, and a currency if the data has more than one.")
-        sent = st.form_submit_button("Ask ProofPilot", type="primary", use_container_width=True)
-    if sent:
-        q = (q or "").strip()
-        if not q:
-            st.error("Please type a question.")
-        elif len(q) < 8 or len(q.split()) < 2:
-            st.error("That's too short to answer. Try a full question, e.g. \"Total sales in May 2024\".")
+    q = st.chat_input("Ask about one number, e.g. Total revenue from 2024-01-02 to 2024-02-06 in USD", max_chars=300)
+    q = ss.pop("pending", None) or q
+    if q is not None:
+        q = q.strip()
+        if len(q) < 8 or len(q.split()) < 2:
+            st.error("That's too short to answer. Ask a full question, e.g. \"Total sales in May 2024\".")
         else:
-            ss["pending"], ss["busy"] = q, True
-            st.rerun()
-
-    examples = EXAMPLES.get(ss["dataset"]["key"], GENERIC)
-    st.markdown('<div class="pp-label">Try one of these</div>', unsafe_allow_html=True)
-    cols = st.columns(2)
-    for i, ex in enumerate(examples):
-        if cols[i % 2].button(ex, key=f"ex_{i}", use_container_width=True):
-            ss["pending"], ss["busy"] = ex, True
-            st.rerun()
-
-    r = ss.get("result")
-    if r:
-        st.divider()
-        show_result(r)
+            with st.chat_message("user", avatar=":material/person:"):
+                st.markdown(esc(q))
+            ask_now(q, tables, flags)
 
 
-def show_result(r):
-    st.markdown(f'<div class="pp-label">Question</div>{esc(r.get("question", ""))}', unsafe_allow_html=True)
+def show_result(r, i=0):
     if r["status"] == "answered":
         if isinstance(r["value"], dict):
             st.markdown('<div class="pp-card pp-answer"><div class="pp-label">Answer · two readings</div>'
@@ -375,43 +393,42 @@ def show_result(r):
                         f'<div class="pp-big">{esc(r["answer"])}</div><div class="pp-muted">Verified: the proof ran '
                         f'twice in fresh processes and gave the same result · {r["seconds"]}s · planner: '
                         f'{esc(r["llm_mode"])}</div></div>', unsafe_allow_html=True)
-        tab1, tab2 = st.tabs(["How it was worked out", "Proof code"])
-        with tab1:
+        with st.expander("How it was worked out"):
             for a in r["assumptions"] or ["No traps touched this answer."]:
                 st.markdown(f"- {a}")
-        with tab2:
+        with st.expander("Proof code"):
             st.code(r["code"], language="python")
             b1, b2 = st.columns(2)
-            if b1.button("Re-run proof", use_container_width=True):
+            if b1.button("Re-run proof", key=f"rerun_{i}", use_container_width=True):
                 with st.spinner("Re-running in a fresh process…"):
                     try:
-                        ss["rerun"] = rerun_proof(r["proof_path"])
+                        ss["reruns"][r["proof_path"]] = rerun_proof(r["proof_path"])
                     except Exception as e:  # noqa: BLE001
-                        ss["rerun"] = {"match": False, "value": str(e)}
+                        ss["reruns"][r["proof_path"]] = {"match": False, "value": str(e)}
             p = ROOT / r["proof_path"] if r["proof_path"] else None
             if p and p.exists():
-                b2.download_button("Download proof (.py)", p.read_text(), file_name=p.name,
+                b2.download_button("Download proof (.py)", p.read_text(), file_name=p.name, key=f"dl_{i}",
                                    mime="text/x-python", use_container_width=True)
-            if "rerun" in ss:
-                if ss["rerun"]["match"]:
-                    st.success(f"Re-ran in a fresh process: same answer ({ss['rerun']['value']}).")
+            done = ss.get("reruns", {}).get(r["proof_path"])
+            if done:
+                if done["match"]:
+                    st.success(f"Re-ran in a fresh process: same answer ({done['value']}).")
                 else:
-                    st.error(f"Re-run did not match: {ss['rerun']['value']}")
+                    st.error(f"Re-run did not match: {done['value']}")
             st.caption(f"Run it yourself:  python {r['proof_path']}")
     elif r["status"] == "abstained":
         st.markdown(f'<div class="pp-card pp-refuse"><div class="pp-label">Refused</div>'
                     f'<div class="pp-big">I can\'t answer this reliably</div>'
                     f'<p><b>Why:</b> {esc(r["reason"])}</p><p><b>What would fix it:</b> {esc(r["needed"])}</p>'
                     f'</div>', unsafe_allow_html=True)
-        st.caption("Refusing is on purpose: a confident wrong number is worse than an honest \"I can't tell\".")
         if r.get("code"):
             with st.expander("The proof that found the problem"):
                 st.code(r["code"], language="python")
     else:
         st.markdown(f'<div class="pp-card pp-error"><div class="pp-label">Error</div>'
-                    f'<div class="pp-big">Something went wrong</div><p>{esc(r["reason"])}</p></div>',
+                    f'<div class="pp-big">Something went wrong</div><p>{esc(r["reason"])}</p>'
+                    f'<p class="pp-muted">Try rephrasing, e.g. include a month and a currency.</p></div>',
                     unsafe_allow_html=True)
-        st.info("Try rephrasing the question, e.g. include a month and a currency.")
 
 
 def page_history():
@@ -550,7 +567,17 @@ PAGES = {
     "settings": st.Page(page_settings, title="Settings", url_path="settings"),
     "help": st.Page(page_help, title="Help", url_path="help"),
 }
-st.navigation(list(PAGES.values()), position="top").run()
+st.markdown('<a class="pp-brand" href="./home" target="_self">ProofPilot</a>', unsafe_allow_html=True)
+with st.sidebar:
+    st.markdown('<div class="pp-side-name">ProofPilot</div><div class="pp-muted">Numbers you can check</div>',
+                unsafe_allow_html=True)
+with st.container(key="theme_toggle"):
+    dark = ss["theme"] == "dark"
+    if st.button("Light mode" if dark else "Dark mode", icon=":material/light_mode:" if dark else ":material/dark_mode:",
+                 help="Switch between light and dark mode"):
+        ss["theme"] = "light" if dark else "dark"
+        st.rerun()
+st.navigation(list(PAGES.values()), position="sidebar").run()
 
 st.markdown(f"""
 <div class="pp-footer">

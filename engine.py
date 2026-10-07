@@ -112,7 +112,9 @@ else:
         else:
             answer = _money(value, unit)
         scope = []
-        if plan["months"]:
+        if plan.get("days"):
+            scope.append(f"dates {plan['days'][0]} to {plan['days'][1]} (inclusive)")
+        elif plan["months"]:
             scope.append(f"months {plan['months'][0]} to {plan['months'][-1]}" if len(plan["months"]) > 1
                          else f"month {plan['months'][0]}")
         if plan["currency_mode"] == "filter":

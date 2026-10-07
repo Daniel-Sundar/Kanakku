@@ -57,24 +57,36 @@ def rule_plan(question: str, s: dict) -> dict:
         plan["agg"] = "count"
     elif re.search(r"\baverage\b|\bmean\b|\bavg\b", q):
         plan["agg"] = "mean"
+    plan["days"] = []
     year = (re.search(r"\b(20\d\d)\b", q) or [None, None])[1]
     qm = re.search(r"\bq([1-4])\b", q)
     hm = re.search(r"\bh([12])\b", q)
-    if hm and year:
+    days = [f"{y}-{int(m):02d}-{int(d):02d}" for y, m, d in re.findall(r"\b(20\d\d)[-/.](\d{1,2})[-/.](\d{1,2})\b", q)
+            if 1 <= int(m) <= 12 and 1 <= int(d) <= 31]
+    found = [i + 1 for i, m in enumerate(MONTHS) if re.search(rf"\b{m}\b|\b{m[:3]}\b", q)]
+    if days:
+        lo, hi = min(days), max(days)
+        plan["days"] = [lo, hi]
+        months, (y, m) = [], (int(lo[:4]), int(lo[5:7]))
+        while (y, m) <= (int(hi[:4]), int(hi[5:7])):
+            months.append(f"{y}-{m:02d}")
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+        plan["months"] = months
+    elif hm and year:
         start = (int(hm.group(1)) - 1) * 6
         plan["months"] = [f"{year}-{m:02d}" for m in range(start + 1, start + 7)]
     elif qm and year:
         start = (int(qm.group(1)) - 1) * 3
         plan["months"] = [f"{year}-{m:02d}" for m in range(start + 1, start + 4)]
-    else:
-        found = [i + 1 for i, m in enumerate(MONTHS) if re.search(rf"\b{m}\b|\b{m[:3]}\b", q)]
-        if found and year:
-            plan["months"] = [f"{year}-{m:02d}" for m in found]
-        elif year:
-            plan["months"] = [f"{year}-{m:02d}" for m in range(1, 13)]
+    elif found and year:
+        if len(found) == 2 and re.search(r"\b(to|through|till|until|-)\b|\bbetween\b", q):
+            found = list(range(min(found), max(found) + 1))     # "January to March"
+        plan["months"] = [f"{year}-{m:02d}" for m in found]
+    elif year:
+        plan["months"] = [f"{year}-{m:02d}" for m in range(1, 13)]
     for cur in s["currencies"] or ["USD", "EUR", "INR"]:
         c = cur.lower()
-        if re.search(rf"\b{c}\s+(orders?|sales?|transactions?|payments?)\b|\b(orders|sales)\s+(in|paid in)\s+{c}\b", q):
+        if re.search(rf"\b{c}\s+(orders?|sales?|transactions?|payments?|invoices?|bills?|receipts?)\b|\b(orders|sales|invoices|bills)\s+(in|paid in|billed in)\s+{c}\b", q):
             plan.update(currency_mode="filter", currency=cur)
             break
         if re.search(rf"\b{c}\b", q):
@@ -113,6 +125,10 @@ def llm_plan(question: str, s: dict, tables: dict):
                             if k in s["dims"] and str(v) in s["dims"][k]}}
         if plan["currency_mode"] != "none" and not plan["currency"]:
             plan["currency_mode"] = "none"
+        exact = rule_plan(question, s)      # exact day ranges are parsed by rule, never guessed
+        plan["days"] = exact["days"]
+        if exact["days"]:
+            plan["months"] = exact["months"]
         return plan, mode
     except (AttributeError, json.JSONDecodeError, TypeError):
         return None, f"{mode}: unreadable plan"
@@ -154,6 +170,6 @@ def make_proof(question: str, plan: dict, s: dict, data_rel: str, proof_path: st
         question=question.replace('"""', "'''"), proof_path=proof_path,
         data_rel=" / ".join(repr(p) for p in data_rel.split("/")),
         fact=s["fact"], date_col=s["date_col"], value_col=None if plan["agg"] == "count" else s["value_col"],
-        agg=plan["agg"], months=plan["months"], currency_col=s["currency_col"],
+        agg=plan["agg"], months=plan["months"], days=plan.get("days") or [], currency_col=s["currency_col"],
         currency_mode=plan["currency_mode"] if s["currency_col"] else "none", currency=plan["currency"],
         key_col=s["key_col"], filters=plan["filters"])
